@@ -1,0 +1,200 @@
+<title>Boatrace Lab 検証レポート</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Noto+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#F2F5F6; --surface:#FFFFFF; --surface2:#E8EEF0; --ink:#17262C; --ink2:#4E6068; --line:#D3DCE0;
+  --accent:#0E4F63; --accent-ink:#0B3D4D; --buoy:#D9581F; --buoy-bg:#FBEDE4; --ok:#2E7D5B; --ok-bg:#E4F2EA; --warn-bg:#FFF4D6; --warn:#8A5A00; --ng:#B23A3A;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:'Zen Kaku Gothic New','Noto Sans JP',system-ui,sans-serif;
+  --body:'Noto Sans JP',system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F181C; --surface:#162228; --surface2:#1E2D34; --ink:#E3ECF0; --ink2:#9DB0B8; --line:#2A3A42;
+    --accent:#6FB7CC; --accent-ink:#9DD3E3; --buoy:#F0844E; --buoy-bg:#3A2418; --ok:#7CCBA3; --ok-bg:#16302A; --warn-bg:#3A2E10; --warn:#F2C766; --ng:#F08080;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F181C; --surface:#162228; --surface2:#1E2D34; --ink:#E3ECF0; --ink2:#9DB0B8; --line:#2A3A42;
+  --accent:#6FB7CC; --accent-ink:#9DD3E3; --buoy:#F0844E; --buoy-bg:#3A2418; --ok:#7CCBA3; --ok-bg:#16302A; --warn-bg:#3A2E10; --warn:#F2C766; --ng:#F08080;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px 64px}
+header.top{padding:28px 0 12px;border-bottom:2px solid var(--accent)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+h1{font-family:var(--disp);font-weight:900;font-size:28px;line-height:1.25;margin:0 0 8px;text-wrap:balance}
+.lede{color:var(--ink2);margin:0;font-size:14px}
+nav.toc{display:flex;gap:8px;overflow-x:auto;padding:12px 0;position:sticky;top:0;background:var(--bg);z-index:5;scrollbar-width:none}
+nav.toc::-webkit-scrollbar{display:none}
+nav.toc a{flex:0 0 auto;font-family:var(--disp);font-weight:700;font-size:12px;color:var(--accent-ink);background:var(--surface2);border:1px solid var(--line);padding:6px 10px;border-radius:999px;text-decoration:none;white-space:nowrap}
+a:focus-visible{outline:2px solid var(--buoy);outline-offset:2px}
+section{padding:28px 0 8px;scroll-margin-top:60px}
+h2{font-family:var(--disp);font-weight:700;font-size:20px;margin:0 0 12px;line-height:1.3;text-wrap:balance}
+h3{font-family:var(--disp);font-weight:700;font-size:15px;margin:20px 0 6px;color:var(--accent-ink)}
+p{margin:0 0 12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 12px}
+.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.kpi div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 8px;text-align:center}
+.kpi b{display:block;font-family:var(--mono);font-size:20px;font-weight:600;color:var(--accent-ink);font-variant-numeric:tabular-nums}
+.kpi b.ng{color:var(--ng)} .kpi b.ok{color:var(--ok)}
+.kpi span{font-size:11px;color:var(--ink2)}
+.tbl{overflow-x:auto;margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:480px;font-size:13px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{font-family:var(--disp);font-weight:700;font-size:12px;background:var(--surface2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c,th.c{text-align:right;font-family:var(--mono);white-space:nowrap;font-variant-numeric:tabular-nums}
+td.hl{color:var(--buoy);font-weight:700}
+.finding{background:var(--buoy-bg);border-left:4px solid var(--buoy);border-radius:0 8px 8px 0;padding:12px 14px;margin:0 0 12px}
+.finding b{color:var(--buoy)}
+.good{background:var(--ok-bg);border-left:4px solid var(--ok);border-radius:0 8px 8px 0;padding:12px 14px;margin:0 0 12px}
+.good b{color:var(--ok)}
+.note{background:var(--warn-bg);border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;color:var(--ink)}
+ul{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 4px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:4px}
+footer{margin-top:32px;font-size:12px;color:var(--ink2);border-top:1px solid var(--line);padding-top:12px}
+.judge{font-family:var(--mono);font-size:13px;background:var(--surface2);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;margin:0 0 12px}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">Phase 2–6 / Backtest report / 2026-08-31</p>
+  <h1>Boatrace Lab 検証レポート</h1>
+  <p class="lede">2018年1月〜2026年8月の485,064レースを取り込み、リーク防止を機械的に担保したウォークフォワードで検証しました。数字はすべて封印テスト（1回のみ評価）の実測値です。よく見せる加工は一切していません。</p>
+</header>
+
+<nav class="toc">
+  <a href="#sum">結論</a><a href="#data">データ</a><a href="#model">モデル品質</a><a href="#valid">検証期間</a><a href="#test">封印テスト</a><a href="#ev">重要な発見</a><a href="#ready">実戦投入判定</a><a href="#m11">Model 1.1</a><a href="#next">次の一手</a>
+</nav>
+
+<section id="sum">
+  <h2>結論（3行）</h2>
+  <div class="card">
+    <p>① モデルは<b>統計的には良くできています</b>。単純な基準率・番組表モデルを明確に上回り、確率の校正はほぼ完璧です（「70%」と言ったレースは実際に約71%当たる）。</p>
+    <p>② それでも<b>市場（オッズ）に勝てていません</b>。回収率は全レース仮想で78.9%、購入候補に絞っても76.6%。控除率25%の壁の内側です。</p>
+    <p style="margin:0">③ 指示書の実戦投入条件（的中率80%・回収率100%）は<b>未達</b>です。現時点で実際に購入する統計的根拠はありません。システムはこの事実を隠さず表示します。</p>
+  </div>
+  <div class="kpi">
+    <div><b>485,064</b><span>検証に使ったレース数</span></div>
+    <div><b>55.9%</b><span>15点セット的中率（全レース）</span></div>
+    <div><b class="ng">78.9%</b><span>回収率（全レース仮想）</span></div>
+  </div>
+</section>
+
+<section id="data">
+  <h2>データ基盤</h2>
+  <ul>
+    <li>2018-01-01〜2026-08-30 の全485,064レース（出走表・直前情報・結果・全券種払戻）。結果の欠落0件、着順と3連単の不整合0件。</li>
+    <li>2026年1月以降は<b>3連単120通りの実最終オッズ</b>を37,316レース分取得（turnmark/api）。それ以前は市場オッズ推定モデルで補完し、必ず「推定」ラベルを付けて区別。</li>
+    <li>予想テーブルは追記専用（DBトリガで改変拒否）、特徴量は「前日までの情報のみ」（未来データを注入しても出力が変わらないことをテストで保証）。</li>
+  </ul>
+</section>
+
+<section id="model">
+  <h2>モデル品質（3連単 log-loss：小さいほど良い）</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>モデル</th><th class="c">log-loss</th><th class="c">15点的中率</th><th class="c">回収率</th></tr></thead>
+    <tbody>
+      <tr><td>M0：場×コース基準率のみ</td><td class="c">4.183</td><td class="c">42.3%</td><td class="c">66.4%</td></tr>
+      <tr><td>M0b：番組表の勝率ロジスティック</td><td class="c">3.904</td><td class="c">55.5%</td><td class="c">76.9%</td></tr>
+      <tr><td><b>採用：LightGBM（83特徴量・均等重み）</b></td><td class="c"><b>3.820</b></td><td class="c"><b>57.9%</b></td><td class="c"><b>80.3%</b></td></tr>
+    </tbody>
+  </table></div>
+  <div class="good"><b>校正は良好。</b>封印テストでの信頼度帯別の実績：信頼度70〜75%と出したレース（6,086R）の実際のセット的中率は70.9%。60〜70%帯→63.0%、75〜80%帯→76.4%、80〜90%帯→81.1%。「AIの自信」ではなく統計的に意味のある確率になっています。</div>
+  <p class="note">時間減衰（直近を重くする）は改善しませんでした（半減期∞/3年/2年/1年で log-loss 3.8204/3.8215/3.8222/3.8271）。規則どおり最も単純な「均等」を採用。</p>
+</section>
+
+<section id="valid">
+  <h2>検証期間で決めたこと（2024-01〜2025-06、83,214R）</h2>
+  <ul>
+    <li><b>穴の最低オッズ：20倍</b>。10〜25倍は全体回収率80.2〜80.4%で信頼区間内の僅差、30倍以上は悪化（40倍:79.1%、50倍:78.4%）。規則「僅差なら中庸」に従い20倍。</li>
+    <li><b>β（市場への縮約）＝0.3</b>。過信した確率で高オッズを掴む winner's curse 対策。</li>
+    <li>穴閾値を上げるほど的中率・回収率とも単調に悪化し、平均払戻の上昇では補えないことを確認（「穴＝高オッズ」ほど良いわけではない、の実証）。</li>
+  </ul>
+</section>
+
+<section id="test">
+  <h2>封印テスト（2025-07〜2026-08、64,560R、パラメータ確定後に1回だけ評価）</h2>
+  <div class="tbl"><table>
+    <thead><tr><th></th><th class="c">全レース仮想</th><th class="c">購入候補のみ<br>(信頼度≥70% かつ 期待値≥1.0)</th></tr></thead>
+    <tbody>
+      <tr><td>レース数</td><td class="c">64,560</td><td class="c">1,903（2.9%）</td></tr>
+      <tr><td>的中率（95%区間）</td><td class="c">55.9%（55.6〜56.3）</td><td class="c"><b>72.5%</b>（70.4〜74.4）</td></tr>
+      <tr><td>回収率（95%区間）</td><td class="c">78.9%（77.5〜80.2）</td><td class="c hl">76.6%（68.4〜85.4）</td></tr>
+      <tr><td>損益（1R=3,000円）</td><td class="c">−4,018万円</td><td class="c">−132.5万円</td></tr>
+      <tr><td>本線的中 / 穴的中</td><td class="c">33,226 / 2,885</td><td class="c">1,330 / 49</td></tr>
+      <tr><td>穴回収率</td><td class="c">77.0%</td><td class="c">69.5%</td></tr>
+      <tr><td>最大連敗 / 最大DD</td><td class="c">11 / 4,018万円</td><td class="c">6 / 139万円</td></tr>
+    </tbody>
+  </table></div>
+  <p>月別回収率は74.7〜84.9%の範囲で安定して<b>100%未満</b>。2026年（実オッズ期間）に限っても78.1%で、推定オッズ期間（80.1%）と大差なく、結果はオッズ推定の誤差ではありません。見送り62,657Rのうち「買っていれば当たっていた」は34,732R（55.4%）で、全体の的中率と同水準——見送り判定は的中しやすさではなく期待値の低さで正しく働いています。</p>
+</section>
+
+<section id="ev">
+  <h2>最も重要な発見：「期待値が高い」レースほど、実際の回収率は低い</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>モデルの主張する期待回収率</th><th class="c">レース数</th><th class="c">実際の回収率</th><th class="c">的中率</th></tr></thead>
+    <tbody>
+      <tr><td>0.8〜0.9</td><td class="c">2,477</td><td class="c">81.6%</td><td class="c">69.1%</td></tr>
+      <tr><td>0.9〜1.0</td><td class="c">13,209</td><td class="c">79.9%</td><td class="c">59.5%</td></tr>
+      <tr><td>1.0〜1.1（「儲かるはず」）</td><td class="c">11,442</td><td class="c hl">77.1%</td><td class="c">53.7%</td></tr>
+      <tr><td>1.1〜1.3</td><td class="c">8,202</td><td class="c hl">75.9%</td><td class="c">47.3%</td></tr>
+      <tr><td>1.3超</td><td class="c">1,590</td><td class="c hl">76.2%</td><td class="c">37.2%</td></tr>
+    </tbody>
+  </table></div>
+  <div class="finding"><b>順序が完全に逆です。</b>「モデルが市場より確率を高く見積もったレース」＝「モデルの推定誤差が大きいレース」であり、そこに賭けるほど損をします（winner's curse）。これは設計レビューで予告した懸念の実証で、<b>このモデルには市場に対する情報優位が（まだ）無い</b>ことを意味します。β=0.3の縮約を入れてもなお残る現象です。</div>
+  <p class="note">市場オッズ推定モデルの精度（参考）：2026年の実オッズ445万点と比較して log 相関0.87。ただし高オッズ帯を系統的に過小評価（300倍超で平均−0.81 log）しており、推定オッズ期間の期待値はさらに割り引いて見る必要があります。実オッズの蓄積で改善予定。</p>
+</section>
+
+<section id="ready">
+  <h2>実戦投入判定</h2>
+  <div class="judge">━━━━━━━━━━━━━━━━━━━━━━
+実戦投入判定（封印テスト実績で仮判定）
+━━━━━━━━━━━━━━━━━━━━━━
+累計レース         1,903 / 1,000  ✅
+累計的中率         72.5% / 80%    ❌ あと7.5pt
+累計回収率         76.6% / 100%   ❌ あと23.4pt
+直近100レース      62.0% / 70%    ❌ あと8.0pt
+目標回収率         76.6% / 110%   ❌ あと33.4pt
+━━━━━━━━━━━━━━━━━━━━━━
+判定：実戦投入条件 未達
+※最終的な購入判断はユーザーが行ってください。
+━━━━━━━━━━━━━━━━━━━━━━</div>
+  <p>本番のペーパートレードは0件からの積み上げになります（上記はバックテストの参考値）。なお15点（120通り中12.5%）という構造上、的中率80%は「1号艇1着率80%級の鉄板レースだけに絞る」ことでしか近づけず、そのようなレースの回収率はさらに低くなります。<b>的中率80%と回収率100%の同時達成は、この買い方では統計的にほぼ不可能</b>というのが検証後の結論です（設計時の見立てどおり）。条件値は設定画面からいつでも変更できます。</p>
+</section>
+
+<section id="m11">
+  <h2>追記：Model 1.1 の検証（2026-09-01）</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>検証期間（2024-01〜2025-06）</th><th class="c">log-loss</th><th class="c">15点的中率</th><th class="c">回収率</th></tr></thead>
+    <tbody>
+      <tr><td>現行設定（48万行）</td><td class="c">3.8204</td><td class="c">57.9%</td><td class="c">80.3%</td></tr>
+      <tr><td>ハイパーパラメータ調整 2種</td><td class="c">3.8207 / 3.8240</td><td class="c">57.5% / 57.4%</td><td class="c">80.4% / 81.0%</td></tr>
+      <tr><td>学習データ 120万行</td><td class="c">3.8129</td><td class="c">58.2%</td><td class="c">80.3%</td></tr>
+      <tr><td><b>120万行 × 3シード・アンサンブル（Model 1.1 候補）</b></td><td class="c"><b>3.8094</b></td><td class="c"><b>58.4%</b></td><td class="c"><b>81.2%</b></td></tr>
+    </tbody>
+  </table></div>
+  <div class="tbl"><table>
+    <thead><tr><th>封印テスト（2025-07〜2026-08、各1回のみ）</th><th class="c">log-loss</th><th class="c">的中率</th><th class="c">回収率</th><th class="c">購入候補 n / 的中率 / 回収率</th></tr></thead>
+    <tbody>
+      <tr><td>Model 1.0</td><td class="c">3.7983</td><td class="c">55.9%</td><td class="c">78.9%</td><td class="c">1,903 / 72.5% / 76.6%</td></tr>
+      <tr><td>Model 1.1（3シード）</td><td class="c">3.7965</td><td class="c">56.1%</td><td class="c">78.8%</td><td class="c">1,975 / 72.9% / 84.4%（区間 75〜96%）</td></tr>
+    </tbody>
+  </table></div>
+  <p>パラメータ調整は効かず、効いたのは「データ量」と「シードアンサンブル」でした。Model 1.1 は確率の質（log-loss）が一貫して僅かに良く、回収率は統計的に区別できません。規則どおり<b>採用はせず shadow 並走</b>（本番で毎日同時に予想・採点し、300レース以上で比較）に回します。最大連敗が 14（1.0 は 11）と増えており、分散低減のはずのアンサンブルで悪化した点は並走で要観察です。</p>
+</section>
+
+<section id="next">
+  <h2>次の一手（Phase 7 以降）</h2>
+  <ul>
+    <li><b>ペーパートレード開始の準備は完了。</b>Model 1.0（全データで学習済み）を登録し、日次の「取込→予想確定→結果照合→自動採点」ループとスマホPWA（ホーム／レース一覧／詳細／成績／実戦投入判定／モデル管理）は動作確認済み。サーバー（Oracle Always Free など）を用意すれば数時間で運用開始できます。</li>
+    <li><b>改善の余地（バックテストで比較してから採用）：</b>展示ST・進入・チルト・部品交換を使う Model 1.1／場別専用モデル／締切前オッズの時系列（−15分→−6分）による d(odds) 補正／期別成績（ファン手帳）の追加／アンサンブル。</li>
+    <li><b>正直な見通し：</b>回収率100%超は「モデル改善」より「市場の歪みを見つける」問題です。長期のペーパートレードで、条件別（場×風×オッズ帯）に市場より正確な領域が見つかるかを検証し続けるのが本システムの役割です。</li>
+  </ul>
+</section>
+
+<footer>集計の詳細：reports/backtest/（モデル比較・穴オッズ探索・封印テスト明細・市場オッズ精度）／データ品質：reports/data_quality.md ／場別統計：reports/stats/。コード一式はチャットの zip を参照。</footer>
+</div>

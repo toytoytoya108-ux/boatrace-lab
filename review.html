@@ -1,0 +1,246 @@
+<title>Boatrace Lab 設計書</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700;900&family=Noto+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#F2F5F6; --surface:#FFFFFF; --surface2:#E8EEF0; --ink:#17262C; --ink2:#4E6068; --line:#D3DCE0;
+  --accent:#0E4F63; --accent-ink:#0B3D4D; --buoy:#D9581F; --buoy-bg:#FBEDE4; --ok:#2E7D5B; --ok-bg:#E4F2EA; --warn-bg:#FFF4D6; --warn:#8A5A00;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:'Zen Kaku Gothic New','Noto Sans JP',system-ui,sans-serif;
+  --body:'Noto Sans JP',system-ui,-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F181C; --surface:#162228; --surface2:#1E2D34; --ink:#E3ECF0; --ink2:#9DB0B8; --line:#2A3A42;
+    --accent:#6FB7CC; --accent-ink:#9DD3E3; --buoy:#F0844E; --buoy-bg:#3A2418; --ok:#7CCBA3; --ok-bg:#16302A; --warn-bg:#3A2E10; --warn:#F2C766;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F181C; --surface:#162228; --surface2:#1E2D34; --ink:#E3ECF0; --ink2:#9DB0B8; --line:#2A3A42;
+  --accent:#6FB7CC; --accent-ink:#9DD3E3; --buoy:#F0844E; --buoy-bg:#3A2418; --ok:#7CCBA3; --ok-bg:#16302A; --warn-bg:#3A2E10; --warn:#F2C766;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px 64px}
+header.top{padding:28px 0 12px;border-bottom:2px solid var(--accent)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 8px}
+h1{font-family:var(--disp);font-weight:900;font-size:28px;line-height:1.25;margin:0 0 8px;text-wrap:balance}
+.lede{color:var(--ink2);margin:0;font-size:14px}
+nav.toc{display:flex;gap:8px;overflow-x:auto;padding:12px 0;position:sticky;top:0;background:var(--bg);z-index:5;scrollbar-width:none}
+nav.toc::-webkit-scrollbar{display:none}
+nav.toc a{flex:0 0 auto;font-family:var(--disp);font-weight:700;font-size:12px;color:var(--accent-ink);background:var(--surface2);border:1px solid var(--line);padding:6px 10px;border-radius:999px;text-decoration:none;white-space:nowrap}
+nav.toc a:focus-visible,a:focus-visible,button:focus-visible{outline:2px solid var(--buoy);outline-offset:2px}
+section{padding:28px 0 8px;scroll-margin-top:60px}
+h2{font-family:var(--disp);font-weight:700;font-size:20px;margin:0 0 12px;line-height:1.3;text-wrap:balance}
+h3{font-family:var(--disp);font-weight:700;font-size:15px;margin:20px 0 6px;color:var(--accent-ink)}
+p{margin:0 0 12px}
+ul{margin:0 0 12px;padding-left:20px}
+li{margin:0 0 4px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 12px}
+.grid{display:grid;gap:12px}
+@media(min-width:560px){.grid.two{grid-template-columns:1fr 1fr}}
+.kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.kpi div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 8px;text-align:center}
+.kpi b{display:block;font-family:var(--mono);font-size:20px;font-weight:600;color:var(--accent-ink);font-variant-numeric:tabular-nums}
+.kpi span{font-size:11px;color:var(--ink2)}
+.tbl{overflow-x:auto;margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:13px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{font-family:var(--disp);font-weight:700;font-size:12px;background:var(--surface2);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+td.c{text-align:center;font-family:var(--mono);white-space:nowrap}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:4px;border:1px solid var(--line);white-space:nowrap}
+.tag.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.tag.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.tag.no{background:var(--buoy-bg);color:var(--buoy);border-color:transparent}
+.flow{font-family:var(--mono);font-size:12px;line-height:1.6;background:var(--surface2);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;margin:0 0 12px}
+.decision{border-left:4px solid var(--buoy);background:var(--surface);border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0 8px 8px 0;padding:14px 16px;margin:0 0 12px}
+.decision .q{font-family:var(--disp);font-weight:700;font-size:15px;margin:0 0 6px}
+.decision .rec{font-size:13px;color:var(--ink2)}
+.decision .rec b{color:var(--buoy)}
+.concern{background:var(--warn-bg);border-radius:8px;padding:12px 14px;margin:0 0 12px;color:var(--ink)}
+.concern b{color:var(--warn)}
+dl{margin:0}
+dt{font-family:var(--disp);font-weight:700;font-size:13px;margin-top:8px}
+dd{margin:0 0 4px;color:var(--ink2);font-size:13px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--surface2);padding:1px 5px;border-radius:4px}
+.formula{font-family:var(--mono);font-size:13px;background:var(--surface2);border-radius:6px;padding:8px 12px;margin:6px 0 10px;overflow-x:auto}
+.timeline{list-style:none;padding:0;margin:0}
+.timeline li{display:grid;grid-template-columns:64px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.timeline li:last-child{border-bottom:none}
+.timeline .ph{font-family:var(--mono);font-size:12px;color:var(--accent-ink);padding-top:3px}
+.timeline .ph.done{color:var(--ok)}
+.timeline .t{font-weight:700}
+.timeline .d{font-size:13px;color:var(--ink2)}
+footer{margin-top:32px;font-size:12px;color:var(--ink2);border-top:1px solid var(--line);padding-top:12px}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">Phase 0–1 / Design review / 2026-08-31</p>
+  <h1>ボートレース予想・検証システム<br>設計レビュー</h1>
+  <p class="lede">データ調査の結果と設計の骨子、正直に伝えるべき統計的な懸念、そして判断をお願いしたい4点をまとめました。決まっている事項は再質問していません。</p>
+</header>
+
+<nav class="toc">
+  <a href="#summary">結論</a><a href="#data">データ調査</a><a href="#arch">構成</a><a href="#model">モデル</a><a href="#backtest">検証</a><a href="#concerns">懸念</a><a href="#decisions">判断事項</a><a href="#roadmap">ロードマップ</a>
+</nav>
+
+<section id="summary">
+  <h2>結論</h2>
+  <div class="card">
+    <p><b>作れます。</b>過去5年分の出走表・結果・払戻・展示タイム・水面気象は公式の配布ファイルで揃い、当日の直前情報も無料の経路があります。</p>
+    <p><b>ただし1点だけ穴があります。</b>過去の「締切前の全通りオッズ」は公式に配布されておらず、どこからも合法的に一括取得できません。回収率の検証は実際の払戻で厳密にできますが、穴判定と期待値の過去検証は推定オッズに頼ることになります（対策は下記）。</p>
+    <p style="margin:0"><b>設計の中心はリーク防止です。</b>予想テーブルは追記専用（DBトリガで更新・削除を禁止）、特徴量は「レース前日までの情報だけ」から作る1本の関数に統一し、当日予想とバックテストで同じ関数を使います。</p>
+  </div>
+  <div class="kpi">
+    <div><b>約25万</b><span>過去5年のレース数</span></div>
+    <div><b>2</b><span>1レースあたり公式サイトへの取得回数</span></div>
+    <div><b>0</b><span>予想生成に使う結果情報</span></div>
+  </div>
+</section>
+
+<section id="data">
+  <h2>Phase 0：データ取得元と規約</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>取得元</th><th>内容</th><th>期間</th><th>規約・条件</th><th>採用</th></tr></thead>
+    <tbody>
+      <tr><td>公式ダウンロード（番組表B／競走成績K）</td><td>出走表（級別・勝率・当地・モーター/ボート・今節成績）、結果（着順・進入・ST・展示タイム・決まり手・天候/風/波・全券種払戻と人気）</td><td class="c">1997〜</td><td>公式配布ファイル。1日1ファイルの低頻度DL</td><td><span class="tag ok">主データ</span></td></tr>
+      <tr><td>公式 期別成績（ファン手帳）</td><td>選手の勝率・2連率・3連率・平均ST・F/L・コース別成績</td><td class="c">2002〜</td><td>同上。公表日以降のレースにのみ適用</td><td><span class="tag ok">採用</span></td></tr>
+      <tr><td>Boatrace Open API（非公式・MIT）</td><td>出走表・直前情報（展示ST・進入・チルト・部品交換・気温水温）・結果のJSON</td><td class="c">2023-05〜</td><td>MIT。約30分更新、停止リスクあり</td><td><span class="tag ok">補助</span></td></tr>
+      <tr><td>公式サイトHTML（odds3t / beforeinfo）</td><td>3連単120通りオッズ、直前情報</td><td class="c">当日のみ</td><td>robots.txt制限なし。ポリシーは「大量アクセス・運営支障」禁止、私的利用の範囲。1レース2回・3秒間隔・1日上限1,000に制限</td><td><span class="tag warn">要判断</span></td></tr>
+      <tr><td>team-nave 商用API</td><td>出走表・直前・オッズ・結果</td><td class="c">非公開</td><td>3,300円/月、1日3クエリ・555件まで</td><td><span class="tag no">不採用</span></td></tr>
+      <tr><td>時系列オッズサイト（kyoteiodds等）</td><td>過去の時系列オッズ</td><td class="c">不明</td><td>規約・機械取得可否が未確認</td><td><span class="tag warn">手動CSVのみ</span></td></tr>
+    </tbody>
+  </table></div>
+  <h3>取れないもの（推測で埋めず NULL 扱い）</h3>
+  <ul>
+    <li>過去の締切前オッズ（全通り）。的中組み合わせの最終オッズだけは払戻から分かる。</li>
+    <li>2023-05 より前のスタート展示（進入・展示ST）、チルト、部品交換。</li>
+    <li>前検タイム・整備情報の大半。</li>
+  </ul>
+</section>
+
+<section id="arch">
+  <h2>システム構成</h2>
+<div class="flow">取得層（差し替え可能なアダプタ）
+  公式ファイル / Open API / 公式HTML(オッズ) / CSV
+      │ レート制限・リトライ・取得ログ
+      ▼
+保存層 PostgreSQL
+  raw → 正規化 → predictions(追記専用) → scoring → 集計
+      │
+      ▼
+特徴量層  build_features(race, asof=締切時刻)  ← 当日もバックテストも同じ関数
+      ▼
+モデル層  艇別強さ → 120通り確率 → 校正 → オッズ → 期待値 → 信頼度 → 15点 → 判定
+      ▼
+運用層 スケジューラ（暫定予想 → 直前取得 → 確定予想 → 結果 → 採点）
+API/UI  FastAPI + React PWA（スマホ最優先、サーバーで一元管理）</div>
+  <div class="grid two">
+    <div class="card"><h3 style="margin-top:0">技術スタック</h3>
+      <dl><dt>Python 3.12 / PostgreSQL 16</dt><dd>LightGBM・scikit-learn・pandas</dd>
+      <dt>FastAPI</dt><dd>JSON API、単一ユーザー認証、HTTPS</dd>
+      <dt>React + TypeScript PWA</dt><dd>ホーム画面追加、Network First キャッシュ（古いオッズを最新と見せない）</dd>
+      <dt>Docker Compose</dt><dd>app / db / caddy の3コンテナ。稼働環境を問わず同一</dd></dl></div>
+    <div class="card"><h3 style="margin-top:0">リーク防止の技術的担保</h3>
+      <ul style="margin:0">
+        <li><code>predictions</code> は UPDATE/DELETE をトリガで拒否、<code>created_at</code> はサーバー時刻を強制</li>
+        <li>採点は <code>created_at &lt; 締切</code> かつ <code>結果取得 &gt; 締切</code> のときだけ有効。違反は集計から除外し警告</li>
+        <li>自前集計はレース前日までの結果のみ。同日の先行レースは運用で間に合わないため使わない</li>
+        <li>直前情報・気象・オッズは取得時刻付きの追記スナップショット。使った行と特徴量値を予想に保存（再現可能）</li>
+        <li>期別成績は公表日以降のレースにのみ結合</li>
+        <li>「未来行を注入しても出力が変わらない」単体テスト</li>
+      </ul></div>
+  </div>
+  <h3>当日の流れ（JST）</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>時刻</th><th>処理</th></tr></thead>
+    <tbody>
+      <tr><td class="c">07:30</td><td>出走表取得 → 暫定予想（stage=program）を保存</td></tr>
+      <tr><td class="c">締切−10分</td><td>公式直前情報を1回取得（Open APIは補助）</td></tr>
+      <tr><td class="c">締切−6分</td><td>3連単オッズを1回取得</td></tr>
+      <tr><td class="c">取得完了時</td><td>確定予想（stage=final）を保存。以後変更不可。締切を過ぎたら生成しない</td></tr>
+      <tr><td class="c">締切+15分</td><td>結果取得 → 採点 → 成績更新（見送りも仮想採点）</td></tr>
+      <tr><td class="c">23:30</td><td>公式K/Bファイルで当日分を照合・補完</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="model">
+  <h2>予想モデル</h2>
+  <div class="card">
+    <h3 style="margin-top:0">120通りの確率</h3>
+    <p>LightGBM で艇ごとの強さ（1着・2着以内・3着以内）を推定し、位置別割引付き Plackett–Luce で120通りに展開します。必ず「場×コース基準率だけ」「番組表の勝率だけ」のベースラインと比較し、上回らなければ採用しません。</p>
+    <h3>校正</h3>
+    <p>学習窓の末尾3か月をホールドアウトして isotonic 校正。「70%と出した予想が長期的に約70%当たる」ことを毎月チェックします。</p>
+    <h3>信頼度の定義</h3>
+    <div class="formula">信頼度 C = Cal( Σ 15点の校正後確率 )</div>
+    <p>「この15点セットが的中する確率」の校正済み推定値そのものです。データ欠損やモデル間の不一致は信頼度に掛け算せず、別のゲート（見送り理由）とフラグで扱います。掛けると校正の意味が壊れるためです。主観的な「自信」は一切使いません。</p>
+    <h3>期待値</h3>
+    <div class="formula">EV_i = p̂_i × オッズ_i × d(オッズ)   p̂ = (1−β)·p + β·q（市場側へ縮約）
+期待回収率 ER = Σ stake_i·EV_i / 3,000円 ≥ 1.0 が購入候補条件</div>
+    <p>自モデルと市場の乖離が最大の買い目＝推定誤差が最大の買い目を避けるため、確率を市場確率 q 側へ少し縮約します（β は検証期間で決定）。</p>
+    <h3>15点</h3>
+    <p><b>本線10点</b>＝校正後確率の上位10。<b>穴5点</b>＝本線以外で「オッズ ≥ 穴最低オッズ（10〜50倍をバックテストで比較）」かつ「確率 ≥ 0.3%」を満たす候補から、EVの信頼下限の順に5点。同一1着艇の穴は最大2点。候補不足時は閾値を1段下げ、その旨を記録して別集計。</p>
+    <h3>モデル版の昇格</h3>
+    <p>候補版 → バックテスト比較（指標順：回収率＞損益＞的中率＞期待値＞最大DD＞最大連敗＞穴回収率＞直近）→ shadow 運用300レース以上 → ユーザーが「採用」を押す。ロールバック可。</p>
+  </div>
+</section>
+
+<section id="backtest">
+  <h2>バックテスト</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>区分</th><th>期間</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td>学習</td><td class="c">2021-09 〜 2023-12</td><td>モデル学習（時間減衰の重み付き）</td></tr>
+      <tr><td>検証</td><td class="c">2024-01 〜 2024-12</td><td>穴オッズ・時間減衰・λ・β・閾値をここで決める</td></tr>
+      <tr><td>テスト（封印）</td><td class="c">2025-01 〜 2026-08</td><td>モデル版ごとに1回だけ評価。ここで再調整しない</td></tr>
+    </tbody>
+  </table></div>
+  <p>月次のウォークフォワード（前月末まで学習→当月を予測→月末に採点）。バックテストの予想は本番の <code>predictions</code> には書かず、専用テーブルに保存します。パラメータは粗いグリッドで逐次に決め、僅差なら単純な方を選びます。すべての指標にサンプル数と信頼区間（的中率＝Wilson、回収率＝ブートストラップ）を添えます。</p>
+  <p style="margin:0">過去オッズが無い分は、K ファイルにある全券種（単勝〜3連単の約10価格/レース）で市場オッズ推定モデルを補正し、推定オッズ依存の結果には必ずラベルを付けます。運用開始日から実オッズを蓄積し、実オッズで再検証します。</p>
+</section>
+
+<section id="concerns">
+  <h2>正直に伝えるべき懸念</h2>
+  <div class="concern"><b>1. 的中率80%と回収率100%は、ほぼ両立しません。</b><br>3連単120通りのうち15点は12.5%。平均的なレース（1号艇1着率55%程度）では、確率を完全に知っていても上位15点に入る確率は約57%です。1号艇80%級の堅いレースに絞れば約79%まで上がりますが、そのとき配当は低く、控除率25%の下で回収率100%超を保つのは一段と難しくなります。</div>
+  <div class="concern"><b>2. 「信頼度70%以上 かつ 期待値1.0以上」は互いに逆方向です。</b><br>堅いレースほど本線は人気側になり期待値は0.75付近に張り付きます。期待値1.0は「市場より33%高い確率」を主張する状態で、両方を満たす購入候補はかなり少なく、1,000レース到達に長期間かかる可能性があります。バックテストで購入候補の発生率と代替ゲート案を必ず並記します。</div>
+  <div class="concern"><b>3. 穴5点の成績は1,000レースでも収束しません。</b><br>穴回収率は少数の万舟に引きずられます。穴の指標には常にサンプル数と区間を添え、モデル比較では log-loss と的中率を主、回収率を参考とします。</div>
+  <p>いずれも条件値は設定パラメータであり、システムは結果を美化しません。未達なら未達と表示します。</p>
+</section>
+
+<section id="decisions">
+  <h2>判断をお願いしたい4点</h2>
+  <div class="decision"><p class="q">1. どこで毎日動かすか</p>
+    <p>A：小型VPS 1台（月700〜1,500円、常時稼働・確実）／B：GitHub Actions＋Supabase＋Netlify（無料だが cron が数分〜数十分遅れ、締切5分前の確定が不安定）／C：購入予定の低予算PCを常時稼働（電気代のみ、停電・回線に依存）。</p>
+    <p class="rec"><b>推奨：A。</b>どれを選んでもコンテナ構成は同じで、コードは変わりません。</p></div>
+  <div class="decision"><p class="q">2. 公式サイトからの当日オッズ取得と、過去オッズの推定方針</p>
+    <p>当日オッズは公式サイトのHTMLからしか取れません。私的利用・1レース2回・3秒間隔・1日上限1,000回に制限した取得で進めてよいか。過去分は推定オッズで検証し、実オッズは運用開始から蓄積して再検証する二段構えでよいか。</p>
+    <p class="rec"><b>推奨：この方針で進める。</b>取らない場合、期待値と穴判定が成立しません。</p></div>
+  <div class="decision"><p class="q">3. 実戦投入条件・購入候補条件を初期値のままにするか</p>
+    <p>指示書の値（的中率80%／回収率100%／直近100R 70%／信頼度70%／期待値1.0）を初期値として実装し、未達なら未達と表示します。代替として「回収率と損益を主、的中率は副」の判定や期待値0.9などを参考表示できます。</p>
+    <p class="rec"><b>推奨：初期値はそのまま、代替案を参考表示。</b>バックテスト結果を見てから変更するのが順当です。</p></div>
+  <div class="decision"><p class="q">4. 生成AI（LLM）による根拠文を初期版に含めるか</p>
+    <p>確率や買い目には影響させず、統計値の根拠を文章に整える役割のみ。APIコスト（1日約150レース分）が発生します。含めない場合は定型テンプレート文で代替します。</p>
+    <p class="rec"><b>推奨：初期版は定型文、LLMは後から追加。</b>差し替え可能な設計にしてあります。</p></div>
+</section>
+
+<section id="roadmap">
+  <h2>ロードマップ</h2>
+  <ul class="timeline">
+    <li><span class="ph done">Phase 0</span><div><div class="t">データ調査</div><div class="d">完了</div></div></li>
+    <li><span class="ph done">Phase 1</span><div><div class="t">設計・レビュー</div><div class="d">本資料。判断4点の確定で完了</div></div></li>
+    <li><span class="ph">Phase 2</span><div><div class="t">データ基盤</div><div class="d">Docker・DB・公式ファイルパーサ・Open API・オッズ取得・CSV取込。5年分の一括取込と欠損率レポート（2〜3週）</div></div></li>
+    <li><span class="ph">Phase 3</span><div><div class="t">統計分析</div><div class="d">場別・コース別・決まり手・配当分布、as-of 特徴量、リーク検査テスト（1〜2週）</div></div></li>
+    <li><span class="ph">Phase 4</span><div><div class="t">予想モデル</div><div class="d">ベースライン・LightGBM・120通り・校正・市場オッズ推定・信頼度・期待値（2〜3週）</div></div></li>
+    <li><span class="ph">Phase 5</span><div><div class="t">15点選定</div><div class="d">穴オッズ探索・時間減衰比較・閾値。封印テストの1回評価（1〜2週）</div></div></li>
+    <li><span class="ph">Phase 6</span><div><div class="t">バックテスト基盤</div><div class="d">指標・モデル比較画面・レポート（1〜2週）</div></div></li>
+    <li><span class="ph">Phase 7</span><div><div class="t">ペーパートレード</div><div class="d">日次自動処理と PWA。連続7日間の無人稼働（2〜3週）</div></div></li>
+    <li><span class="ph">Phase 8</span><div><div class="t">継続運用</div><div class="d">外れ分析・校正監視・shadow 比較・昇格フロー・通知の拡張点</div></div></li>
+  </ul>
+  <p style="margin-top:12px">優先順位：リーク防止と記録の正しさ ＞ 取得の安定性 ＞ モデル精度 ＞ UIの見栄え。</p>
+</section>
+
+<footer>設計書一式（00 データ調査／01 要件整理／02 構成／03 DB／04 モデル／05 バックテスト／06 UI／07 日次運用／08 ロードマップ）はファイルで別途お渡しします。</footer>
+</div>

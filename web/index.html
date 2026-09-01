@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Boatrace Lab</title>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon.svg">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0E4F63">
+<style>
+:root{--bg:#F2F5F6;--sf:#fff;--sf2:#E8EEF0;--ink:#17262C;--ink2:#4E6068;--line:#D3DCE0;--acc:#0E4F63;--acc2:#6FB7CC;--buoy:#D9581F;--ok:#2E7D5B;--okbg:#E4F2EA;--ng:#B23A3A;--ngbg:#F8E5E5;--warnbg:#FFF4D6;--warn:#8A5A00;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0F181C;--sf:#162228;--sf2:#1E2D34;--ink:#E3ECF0;--ink2:#9DB0B8;--line:#2A3A42;--acc:#6FB7CC;--acc2:#0E4F63;--buoy:#F0844E;--ok:#7CCBA3;--okbg:#16302A;--ng:#F08080;--ngbg:#3A1C1C;--warnbg:#3A2E10;--warn:#F2C766}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.app{max-width:640px;margin:0 auto;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 0 8px;display:flex;justify-content:space-between;align-items:baseline;border-bottom:2px solid var(--acc)}
+header h1{margin:0;font-size:17px;font-weight:800;letter-spacing:.02em}header .sub{font-size:12px;color:var(--ink2);font-family:var(--mono)}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--sf);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:10}
+nav button{flex:1;border:0;background:none;color:var(--ink2);font:inherit;font-size:11px;padding:8px 0 6px;min-height:52px}nav button.on{color:var(--acc);font-weight:700}nav button span{display:block;font-size:20px}
+.card{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 6px;text-align:center}.kpi b{display:block;font-family:var(--mono);font-size:19px;font-variant-numeric:tabular-nums;color:var(--acc)}.kpi span{font-size:11px;color:var(--ink2)}
+.kpi b.pos{color:var(--ok)}.kpi b.neg{color:var(--ng)}
+h2{font-size:15px;margin:18px 0 6px}h3{font-size:14px;margin:12px 0 4px;color:var(--ink2)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row .t{flex:1;min-width:0}.row .t b{font-size:15px}.row .t small{display:block;color:var(--ink2);font-size:12px}
+.pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap;font-family:var(--mono)}
+.pill.buy{background:var(--acc);color:#fff;border-color:transparent}.pill.skip{background:var(--sf2);color:var(--ink2)}.pill.hit{background:var(--okbg);color:var(--ok);border-color:transparent}.pill.miss{background:var(--ngbg);color:var(--ng);border-color:transparent}.pill.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
+.bar{height:6px;background:var(--sf2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}.muted{color:var(--ink2);font-size:12px}.right{text-align:right}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:left}th{font-size:11px;color:var(--ink2);font-weight:600}td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tbl{overflow-x:auto}
+.sel{display:grid;grid-template-columns:1fr 1fr;gap:6px}.sel .pt{background:var(--sf2);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:14px;display:flex;justify-content:space-between}.sel .pt.hole{border-left:3px solid var(--buoy)}.sel .pt.won{outline:2px solid var(--ok)}
+.pt small{color:var(--ink2);font-size:11px}
+.boat{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.boat:last-child{border:0}.lane{width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff}
+.l1{background:#fff;color:#222;border:1px solid #999}.l2{background:#222}.l3{background:#d33}.l4{background:#28a}.l5{background:#dc0;color:#222}.l6{background:#2a2}
+button.btn{font:inherit;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:8px;padding:8px 14px}button.btn.ghost{background:none;color:var(--acc)}button.btn:disabled{opacity:.5}
+input,select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--sf);color:var(--ink);width:100%}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:4px 0}.tabs button{flex:0 0 auto;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--sf);color:var(--ink2);padding:6px 10px;border-radius:999px}.tabs button.on{background:var(--acc);color:#fff;border-color:transparent}
+.judge{border-left:4px solid var(--acc);padding-left:10px}.judge.ok{border-color:var(--ok)}.judge.ng{border-color:var(--buoy)}
+details summary{cursor:pointer;color:var(--acc);font-size:13px}
+.offline{background:var(--warnbg);color:var(--warn);font-size:12px;padding:6px 10px;border-radius:8px;margin:8px 0;display:none}
+.login{max-width:320px;margin:80px auto;text-align:center}
+pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;border-radius:8px;overflow-x:auto}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header><h1>🚤 Boatrace Lab</h1><div class="sub" id="hdr"></div></header>
+  <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
+  <main id="main"></main>
+</div>
+<nav>
+  <button data-v="home"><span>🏠</span>ホーム</button>
+  <button data-v="races"><span>📋</span>レース</button>
+  <button data-v="stats"><span>📈</span>成績</button>
+  <button data-v="models"><span>🧪</span>モデル</button>
+  <button data-v="settings"><span>⚙️</span>設定</button>
+</nav>
+<script>
+const $ = (s, el=document) => el.querySelector(s);
+const fmtP = v => v==null ? "–" : (v*100).toFixed(1)+"%";
+const fmtY = v => v==null ? "–" : (v>=0?"+":"") + Math.round(v).toLocaleString() + "円";
+const fmtN = v => v==null ? "–" : Math.round(v).toLocaleString();
+const hhmm = s => s ? s.slice(11,16) : "";
+const state = { view: "home", raceId: null, day: null, onlyBuy: true, statsBy: "month" };
+const REASON = { confidence: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得", low_agreement: "モデル不一致" };
+
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opt || {}));
+  $("#offline").style.display = r.headers.get("X-From-Cache") ? "block" : "none";
+  if (r.status === 401) { renderLogin(); throw new Error("auth"); }
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+function go(view, extra) { state.view = view; Object.assign(state, extra || {}); document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.v === view)); render(); }
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.v));
+
+async function render() {
+  const m = $("#main"); m.innerHTML = '<p class="muted">読み込み中…</p>';
+  try {
+    if (state.view === "home") await renderHome(m);
+    else if (state.view === "races") await renderRaces(m);
+    else if (state.view === "race") await renderRace(m);
+    else if (state.view === "stats") await renderStats(m);
+    else if (state.view === "models") await renderModels(m);
+    else if (state.view === "settings") await renderSettings(m);
+  } catch (e) { if (e.message !== "auth") m.innerHTML = `<div class="card">エラー: ${e.message}</div>`; }
+}
+function renderLogin() {
+  $("#main").innerHTML = `<div class="login card"><h2>ログイン</h2><input id="pw" type="password" placeholder="パスワード" autocomplete="current-password"><p><button class="btn" id="lg">ログイン</button></p></div>`;
+  $("#lg").onclick = async () => { const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) }); if (r.ok) render(); else alert("パスワードが違います"); };
+}
+function kpi(label, val, cls="") { return `<div class="kpi"><b class="${cls}">${val}</b><span>${label}</span></div>`; }
+function raceRow(r) {
+  const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : `<span class="pill">未予想</span>`;
+  const res = r.valid ? `<span class="pill ${r.hit ? "hit" : "miss"}">${r.hit ? "🎯 " + (r.hit_kind === "hole" ? "穴" : "本線") : "外れ"}</span>` : (r.trifecta ? `<span class="pill">${r.trifecta}</span>` : "");
+  return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${r.stadium} ${r.race_no}R</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}</small>
+    <div class="bar" style="margin-top:4px"><i style="width:${Math.round((r.confidence || 0) * 100)}%"></i></div></div>
+    <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">ER ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div></div><div>${dec}<br>${res}</div></div>`;
+}
+async function renderHome(m) {
+  const [t, s, rd, h] = await Promise.all([api("/api/today"), api("/api/stats"), api("/api/readiness"), api("/api/health")]);
+  $("#hdr").textContent = t.date + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
+  const d = t.day, cum = s.buy, r100 = s.recent100_buy;
+  m.innerHTML = `
+    <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
+    <h2>今日の勝負レース</h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
+    <h2>本日の仮想収支（推奨のみ）</h2><div class="kpis">${kpi("投資", fmtN(d.stake)+"円")}${kpi("払戻", fmtN(d.payout)+"円")}${kpi("損益", fmtY(d.payout - d.stake), d.payout - d.stake >= 0 ? "pos" : "neg")}</div>
+    <p class="muted">全レース仮想：${d.virtual_hits}/${d.n} 的中、${fmtY(d.virtual_payout - d.virtual_stake)}</p>
+    <h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", cum.n)}${kpi("的中率", fmtP(cum.hit_rate))}${kpi("回収率", fmtP(cum.roi), (cum.roi || 0) >= 1 ? "pos" : "")}</div>
+    <div class="kpis" style="margin-top:8px">${kpi("直近100 的中率", fmtP(r100.hit_rate))}${kpi("直近100 回収率", fmtP(r100.roi))}${kpi("累計損益", fmtY(cum.pnl), cum.pnl >= 0 ? "pos" : "neg")}</div>
+    <h2>実戦投入判定</h2>${readinessCard(rd)}
+    <h2>システム状態</h2><div class="card muted">採用モデル: ${h.active_model || "なし"}<br>直近ジョブ: ${h.jobs.slice(0,3).map(j => `${j.job.split(":")[0]} ${j.ok ? "✓" : (j.ok === false ? "✗" : "…")}`).join(" / ") || "なし"}<br>取得失敗(7日): ${h.fetch_failures_7d.map(f => f.source + " " + f.n).join(", ") || "0"}</div>`;
+}
+function readinessCard(rd) {
+  const rows = rd.checks.map(c => `<tr><td>${c.name}</td><td class="n">${c.fmt === "pct" ? fmtP(c.value) : fmtN(c.value)}</td><td class="n">${c.fmt === "pct" ? fmtP(c.target) : fmtN(c.target)}</td><td>${c.ok ? "✅" : "—"}</td></tr>`).join("");
+  return `<div class="card judge ${rd.passed ? "ok" : "ng"}"><table><tr><th>条件</th><th class="n">現在</th><th class="n">目標</th><th></th></tr>${rows}</table>
+    <p><b>判定：${rd.passed ? "実戦投入条件クリア" : "実戦投入条件：未達"}</b></p>${rd.warnings.map(w => `<p class="pill warn" style="white-space:normal">⚠ ${w}</p>`).join("")}<p class="muted">${rd.note}</p></div>`;
+}
+async function renderRaces(m) {
+  const t = await api("/api/today" + (state.day ? "?d=" + state.day : ""));
+  $("#hdr").textContent = t.date;
+  const list = t.races.filter(r => !state.onlyBuy || r.decision === "buy");
+  m.innerHTML = `<div class="tabs"><button class="${state.onlyBuy ? "on" : ""}" onclick="go('races',{onlyBuy:true})">推奨のみ</button><button class="${!state.onlyBuy ? "on" : ""}" onclick="go('races',{onlyBuy:false})">全レース</button>
+    <input type="date" value="${t.date}" style="width:auto" onchange="go('races',{day:this.value})"></div>
+    <div class="card">${list.length ? list.map(raceRow).join("") : '<p class="muted">該当なし</p>'}</div>`;
+}
+async function renderRace(m) {
+  const d = await api("/api/races/" + state.raceId);
+  const r = d.race, p = d.predictions.find(x => x.stage === "final" && x.role === "active") || d.predictions[0];
+  const prog = d.predictions.find(x => x.stage === "program" && x.role === "active");
+  $("#hdr").textContent = `${r.stadium} ${r.race_no}R`;
+  const c = d.conditions;
+  let html = `<p><button class="btn ghost" onclick="go('races')">‹ 一覧</button></p>
+    <div class="card"><b>${r.stadium} ${r.race_no}R</b> ${r.grade || ""} ${r.race_type || ""}<br><span class="muted">締切 ${r.closed_at ? r.closed_at.replace("T"," ").slice(0,16) : "–"}${c ? ` · ${c.weather || ""} 風${c.wind_dir || ""}${c.wind_speed_m ?? "–"}m 波${c.wave_cm ?? "–"}cm 水温${c.water_temp_c ?? "–"}℃` : ""}</span></div>`;
+  if (r.trifecta) {
+    const sc = p && p.scoring;
+    html += `<div class="card judge ${sc && sc.hit ? "ok" : "ng"}"><h3>結果</h3><b class="mono" style="font-size:22px">${r.trifecta}</b> <span class="muted">${r.kimarite || ""} 払戻 ${fmtN(r.trifecta_payout)}円${r.is_irregular ? "（返還等あり）" : ""}</span>
+      ${sc ? `<p>${sc.valid ? (sc.hit ? `🎯 的中！（${sc.hit_kind === "hole" ? "穴" : "本線"}）` : "外れ") : "無効: " + sc.invalid_reason}<br>投資 ${fmtN(sc.stake_total)}円 / 払戻 ${fmtN(sc.payout_total)}円 / 損益 ${fmtY(sc.pnl)} / 回収率 ${fmtP(sc.roi)}${p.decision === "skip" ? "<br><span class='muted'>見送りレース（仮に購入していた場合）</span>" : ""}</p>` : ""}</div>`;
+  }
+  if (p) {
+    const est = p.flags && p.flags.odds_estimated;
+    html += `<div class="card judge ${p.decision === "buy" ? "ok" : ""}"><div class="kpis">${kpi("信頼度", fmtP(p.confidence))}${kpi("期待回収率", fmtP(p.expected_return))}${kpi(p.decision === "buy" ? "推奨" : "見送り", p.decision === "buy" ? "15点 3,000円" : (REASON[p.skip_reason] || p.skip_reason || ""))}</div>
+      <p class="muted">${p.stage === "final" ? "確定予想" : "暫定予想（出走表のみ）"} · ${p.created_at.replace("T"," ").slice(0,16)} · データ完全性 ${fmtP(p.completeness)}${est ? " · <span class='pill warn'>オッズは推定値</span>" : ""}${p.completeness < 1 ? " · <span class='pill warn'>一部データ未取得</span>" : ""}</p></div>`;
+    const won = r.trifecta;
+    const pt = s => `<div class="pt ${s.kind} ${won === s.combo ? "won" : ""}" onclick="this.querySelector('small').style.display='block'"><span>${s.combo}</span><span>${s.stake}円</span><small style="display:none;flex-basis:100%">確率 ${fmtP(s.prob)} · オッズ ${s.odds != null ? s.odds.toFixed(1) : "–"} · 期待値 ${s.ev != null ? s.ev.toFixed(2) : "–"}</small></div>`;
+    html += `<div class="card"><h3>本線 10点</h3><div class="sel">${p.selections.filter(s => s.kind === "main").map(pt).join("")}</div><h3>穴 5点</h3><div class="sel">${p.selections.filter(s => s.kind === "hole").map(pt).join("")}</div><p class="right muted">合計 ${p.selections.reduce((a, s) => a + s.stake, 0).toLocaleString()}円（タップで根拠）</p></div>`;
+    html += `<div class="card"><h3>根拠</h3><p>${p.rationale_text || ""}</p><p class="muted">軸 ${p.rationale.axis_lane}号艇 1着確率 ${fmtP(p.rationale.axis_p_win)}・軸の3連単総確率 ${fmtP(p.rationale.axis_trifecta_mass)}・本線合計 ${fmtP(p.rationale.main_mass)}・穴合計 ${fmtP(p.rationale.hole_mass)}</p></div>`;
+    const be = p.boat_eval;
+    html += `<div class="card"><h3>6艇評価</h3>` + Object.keys(be).sort().map(k => { const b = be[k]; return `<div class="boat"><div class="lane l${k}">${k}</div><div><b>${b.name || ""}</b> <span class="muted">${b.klass || ""} 進入${b.course_pred}</span><br><span class="muted">勝率${b.nat_win_rate ?? "–"} 当地${b.loc_win_rate ?? "–"} ST${b.avg_st ?? "–"} 機${b.motor_rate2 ?? "–"}% 展示${b.exhibition_time ?? "–"}(${b.exhibition_rank ?? "–"}位) 展示ST${b.st_exh ?? "–"}<br>コース別1着率(2年) ${fmtP(b.course_win_rate_2y)} n=${b.course_n_2y ?? 0} · 当地同コース ${fmtP(b.stadium_course_win_rate)} n=${b.stadium_course_n ?? 0} · 場基準 ${fmtP(b.stadium_course_base_1y)}</span></div><div class="right mono">${fmtP(b.p_win)}<br><small class="muted">${fmtP(b.p_top3)}</small></div></div>`; }).join("") + `</div>`;
+    const top = Object.entries(p.probs).sort((a, b) => b[1] - a[1]);
+    html += `<div class="card"><details><summary>120通りの評価を見る</summary><div class="tbl"><table><tr><th>組</th><th class="n">確率</th><th class="n">オッズ</th><th class="n">期待値</th></tr>${top.map(([k, v]) => `<tr><td class="mono">${k}</td><td class="n">${fmtP(v)}</td><td class="n">${p.odds_used[k] != null ? p.odds_used[k].toFixed(1) : "–"}</td><td class="n">${(p.ev[k] || 0).toFixed(2)}</td></tr>`).join("")}</table></div></details></div>`;
+    if (prog && p.stage === "final") html += `<p class="muted">暫定予想（出走表のみ）: 信頼度 ${fmtP(prog.confidence)} / 期待回収率 ${fmtP(prog.expected_return)} / ${prog.decision}</p>`;
+  } else {
+    html += `<div class="card"><h3>出走表</h3>` + d.entries.map(e => `<div class="boat"><div class="lane l${e.lane}">${e.lane}</div><div><b>${e.name || ""}</b> <span class="muted">${e.klass || ""} 勝率${e.nat_win_rate ?? "–"} 当地${e.loc_win_rate ?? "–"} ST${e.avg_st ?? "–"} 機${e.motor_rate2 ?? "–"}%</span></div><div></div></div>`).join("") + `<p class="muted">予想はまだありません。</p></div>`;
+  }
+  m.innerHTML = html;
+}
+async function renderStats(m) {
+  const s = await api("/api/stats");
+  const by = state.statsBy;
+  const bd = await api("/api/stats/breakdown?by=" + by + (by === "kind" ? "" : ""));
+  const cal = await api("/api/stats/calibration");
+  const b = s.buy, v = s.all_virtual;
+  const tabs = [["month", "月別"], ["stadium", "場別"], ["grade", "グレード"], ["odds_band", "オッズ帯"], ["confidence_band", "信頼度帯"], ["kind", "本線/穴"], ["model_version", "モデル"]];
+  const cols = bd.length ? Object.keys(bd[0]) : [];
+  m.innerHTML = `<h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", b.n)}${kpi("的中率", fmtP(b.hit_rate))}${kpi("回収率", fmtP(b.roi), (b.roi || 0) >= 1 ? "pos" : "")}${kpi("損益", fmtY(b.pnl), b.pnl >= 0 ? "pos" : "neg")}${kpi("最大連敗", b.max_losing_streak)}${kpi("最大DD", fmtN(b.max_drawdown) + "円")}</div>
+    <p class="muted">的中率95%区間 ${b.hit_rate_ci ? b.hit_rate_ci.map(fmtP).join("〜") : "–"} · 回収率95%区間 ${b.roi_ci ? b.roi_ci.map(fmtP).join("〜") : "–"} · 本線的中 ${b.main_hits} / 穴的中 ${b.hole_hits} · 穴回収率 ${fmtP(b.hole_roi)}</p>
+    <h2>直近</h2><div class="kpis">${[50, 100, 200, 500].map(n => kpi(`直近${n}`, `${fmtP(s["recent" + n + "_buy"].hit_rate)} / ${fmtP(s["recent" + n + "_buy"].roi)}`)).join("")}</div>
+    <h2>見送りの検証</h2><div class="card muted">全レース仮想：${v.n}R 的中率 ${fmtP(v.hit_rate)} 回収率 ${fmtP(v.roi)}<br>見送り ${s.n_skip}R のうち的中していたもの ${s.skip_would_hit}（見送り正解 ${s.skip_correct}）</div>
+    <h2>内訳</h2><div class="tabs">${tabs.map(([k, l]) => `<button class="${by === k ? "on" : ""}" onclick="go('stats',{statsBy:'${k}'})">${l}</button>`).join("")}</div>
+    <div class="card tbl">${bd.length ? `<table><tr>${cols.map(c => `<th class="${typeof bd[0][c] === "number" ? "n" : ""}">${c}</th>`).join("")}</tr>${bd.map(r => `<tr>${cols.map(c => `<td class="${typeof r[c] === "number" ? "n" : ""}">${typeof r[c] === "number" ? (c.includes("rate") || c.includes("roi") ? fmtP(r[c]) : fmtN(r[c])) : (r[c] ?? "")}</td>`).join("")}</tr>`).join("")}</table>` : '<p class="muted">データなし</p>'}</div>
+    <h2>信頼度の校正（予測 vs 実績）</h2><div class="card tbl"><table><tr><th>信頼度帯</th><th class="n">n</th><th class="n">予測平均</th><th class="n">実績的中率</th></tr>${cal.map(r => `<tr><td>${r.band}</td><td class="n">${r.n}</td><td class="n">${fmtP(r.conf_mean)}</td><td class="n">${fmtP(r.hit_rate)}</td></tr>`).join("")}</table></div>`;
+}
+async function renderModels(m) {
+  const [ms, bt] = await Promise.all([api("/api/models"), api("/api/backtests")]);
+  m.innerHTML = `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
+    <h2>バックテスト</h2>${Object.entries(bt).map(([k, v]) => `<div class="card"><details><summary>${k}</summary><pre class="md">${v.replace(/</g, "&lt;")}</pre></details></div>`).join("") || '<p class="muted">レポートなし</p>'}`;
+}
+async function renderSettings(m) {
+  const s = await api("/api/settings");
+  const rd = s.readiness;
+  m.innerHTML = `<h2>購入候補条件</h2><div class="card"><label>信頼度（下限）<input id="cmin" type="number" step="0.01" value="${s.confidence_min}"></label><label>期待回収率（下限）<input id="emin" type="number" step="0.01" value="${s.ev_min}"></label><label>データ完全性（下限）<input id="cpl" type="number" step="0.05" value="${s.completeness_min}"></label></div>
+    <h2>実戦投入条件</h2><div class="card">${Object.entries(rd).map(([k, v]) => `<label>${k}<input id="rd_${k}" type="number" step="0.01" value="${v}"></label>`).join("")}</div>
+    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">買い目は3連単15点（本線10・穴5）、1点200円で固定です。変更はモデル版として管理します。</p>`;
+  $("#save").onclick = async () => {
+    const body = { confidence_min: +$("#cmin").value, ev_min: +$("#emin").value, completeness_min: +$("#cpl").value, readiness: Object.fromEntries(Object.keys(rd).map(k => [k, +$("#rd_" + k).value])) };
+    await api("/api/settings", { method: "PUT", body: JSON.stringify(body) }); alert("保存しました"); render();
+  };
+}
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+go("home");
+</script>
+</body>
+</html>

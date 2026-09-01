@@ -1,0 +1,263 @@
+{
+ "quality": {
+  "n": 64560,
+  "trifecta_logloss": 3.7982680797576904
+ },
+ "summary": {
+  "all": {
+   "n": 64560,
+   "hits": 36111,
+   "hit_rate": 0.5593,
+   "hit_rate_ci": [
+    0.5555,
+    0.5632
+   ],
+   "stake": 190682400.0,
+   "payout": 150505060.0,
+   "pnl": -40177340.0,
+   "roi": 0.7893,
+   "roi_ci": [
+    0.7754,
+    0.8018
+   ],
+   "avg_payout_on_hit": 4167.8453,
+   "main_hits": 33226,
+   "hole_hits": 2885,
+   "max_losing_streak": 11,
+   "max_drawdown": 40180780,
+   "avg_confidence": 0.5792,
+   "avg_expected_return": 0.9308,
+   "hole_roi": 0.7699,
+   "main_roi": 0.7807
+  },
+  "buy": {
+   "n": 1903,
+   "hits": 1379,
+   "hit_rate": 0.7246,
+   "hit_rate_ci": [
+    0.7041,
+    0.7442
+   ],
+   "stake": 5658400.0,
+   "payout": 4333400.0,
+   "pnl": -1325000.0,
+   "roi": 0.7658,
+   "roi_ci": [
+    0.6843,
+    0.8538
+   ],
+   "avg_payout_on_hit": 3142.422,
+   "main_hits": 1330,
+   "hole_hits": 49,
+   "max_losing_streak": 6,
+   "max_drawdown": 1394780,
+   "avg_confidence": 0.7547,
+   "avg_expected_return": 1.0857,
+   "hole_roi": 0.6946,
+   "main_roi": 0.7913
+  },
+  "skip": {
+   "n": 62657,
+   "hits": 34732,
+   "hit_rate": 0.5543,
+   "hit_rate_ci": [
+    0.5504,
+    0.5582
+   ],
+   "stake": 185024000.0,
+   "payout": 146171660.0,
+   "pnl": -38852340.0,
+   "roi": 0.79,
+   "roi_ci": [
+    0.7775,
+    0.8053
+   ],
+   "avg_payout_on_hit": 4208.5587,
+   "main_hits": 31896,
+   "hole_hits": 2836,
+   "max_losing_streak": 12,
+   "max_drawdown": 38855780,
+   "avg_confidence": 0.5738,
+   "avg_expected_return": 0.9261,
+   "hole_roi": 0.7722,
+   "main_roi": 0.7803
+  }
+ },
+ "buy_rate": 0.02947645600991326,
+ "skip_would_hit": 34732,
+ "recent100_buy": {
+  "n": 100,
+  "hit_rate": 0.62,
+  "roi": 0.4663722826086957
+ },
+ "recent100_all": {
+  "n": 100,
+  "hit_rate": 0.46,
+  "roi": 0.8142567567567568
+ },
+ "params": {
+  "half_life": null,
+  "hole_min_odds": 20,
+  "beta": 0.3
+ },
+ "by_odds_source_real": {
+  "all": {
+   "n": 36924,
+   "hits": 20180,
+   "hit_rate": 0.5465,
+   "hit_rate_ci": [
+    0.5414,
+    0.5516
+   ],
+   "stake": 109594400.0,
+   "payout": 85570880.0,
+   "pnl": -24023520.0,
+   "roi": 0.7808,
+   "roi_ci": [
+    0.7607,
+    0.8021
+   ],
+   "avg_payout_on_hit": 4240.3806,
+   "main_hits": 19241,
+   "hole_hits": 939,
+   "max_losing_streak": 11,
+   "max_drawdown": 24052880,
+   "avg_confidence": 0.5758,
+   "avg_expected_return": 1.0459,
+   "hole_roi": 0.7596,
+   "main_roi": 0.7789
+  },
+  "buy": {
+   "n": 1878,
+   "hits": 1361,
+   "hit_rate": 0.7247,
+   "hit_rate_ci": [
+    0.7041,
+    0.7444
+   ],
+   "stake": 5585200.0,
+   "payout": 4273500.0,
+   "pnl": -1311700.0,
+   "roi": 0.7651,
+   "roi_ci": [
+    0.6831,
+    0.8537
+   ],
+   "avg_payout_on_hit": 3139.9706,
+   "main_hits": 1315,
+   "hole_hits": 46,
+   "max_losing_streak": 6,
+   "max_drawdown": 1394780,
+   "avg_confidence": 0.755,
+   "avg_expected_return": 1.0836,
+   "hole_roi": 0.6899,
+   "main_roi": 0.7928
+  },
+  "skip": {
+   "n": 35046,
+   "hits": 18819,
+   "hit_rate": 0.537,
+   "hit_rate_ci": [
+    0.5318,
+    0.5422
+   ],
+   "stake": 104009200.0,
+   "payout": 81297380.0,
+   "pnl": -22711820.0,
+   "roi": 0.7816,
+   "roi_ci": [
+    0.7614,
+    0.8024
+   ],
+   "avg_payout_on_hit": 4319.9628,
+   "main_hits": 17926,
+   "hole_hits": 893,
+   "max_losing_streak": 12,
+   "max_drawdown": 22748680,
+   "avg_confidence": 0.5662,
+   "avg_expected_return": 1.0439,
+   "hole_roi": 0.7634,
+   "main_roi": 0.7782
+  }
+ },
+ "by_odds_source_estimated": {
+  "all": {
+   "n": 27636,
+   "hits": 15931,
+   "hit_rate": 0.5765,
+   "hit_rate_ci": [
+    0.5706,
+    0.5823
+   ],
+   "stake": 81088000.0,
+   "payout": 64934180.0,
+   "pnl": -16153820.0,
+   "roi": 0.8008,
+   "roi_ci": [
+    0.7826,
+    0.8174
+   ],
+   "avg_payout_on_hit": 4075.9638,
+   "main_hits": 13985,
+   "hole_hits": 1946,
+   "max_losing_streak": 11,
+   "max_drawdown": 16153960,
+   "avg_confidence": 0.5836,
+   "avg_expected_return": 0.7771,
+   "hole_roi": 0.7837,
+   "main_roi": 0.783
+  },
+  "buy": {
+   "n": 25,
+   "hits": 18,
+   "hit_rate": 0.72,
+   "hit_rate_ci": [
+    0.5242,
+    0.8572
+   ],
+   "stake": 73200.0,
+   "payout": 59900.0,
+   "pnl": -13300.0,
+   "roi": 0.8183,
+   "roi_ci": [
+    0.4453,
+    1.3493
+   ],
+   "avg_payout_on_hit": 3327.7778,
+   "main_hits": 15,
+   "hole_hits": 3,
+   "max_losing_streak": 3,
+   "max_drawdown": 27780,
+   "avg_confidence": 0.728,
+   "avg_expected_return": 1.2445,
+   "hole_roi": 1.048,
+   "main_roi": 0.674
+  },
+  "skip": {
+   "n": 27611,
+   "hits": 15913,
+   "hit_rate": 0.5763,
+   "hit_rate_ci": [
+    0.5705,
+    0.5821
+   ],
+   "stake": 81014800.0,
+   "payout": 64874280.0,
+   "pnl": -16140520.0,
+   "roi": 0.8008,
+   "roi_ci": [
+    0.783,
+    0.8172
+   ],
+   "avg_payout_on_hit": 4076.8102,
+   "main_hits": 13970,
+   "hole_hits": 1943,
+   "max_losing_streak": 11,
+   "max_drawdown": 16140660,
+   "avg_confidence": 0.5835,
+   "avg_expected_return": 0.7767,
+   "hole_roi": 0.7834,
+   "main_roi": 0.7831
+  }
+ }
+}

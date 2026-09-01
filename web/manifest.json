@@ -1,0 +1,12 @@
+{
+  "name": "Boatrace Lab",
+  "short_name": "BoatLab",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F181C",
+  "theme_color": "#0E4F63",
+  "lang": "ja",
+  "icons": [
+    {"src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}

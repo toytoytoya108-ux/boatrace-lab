@@ -1,0 +1,54 @@
+# Boatrace Lab — KAGOYA CLOUD VPS (2GB) 用構成（リポジトリ直下に置く）
+# 使い方: deploy/bootstrap.sh が自動で使う。手動なら: docker compose up -d
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: boatlab:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8080"
+    mem_limit: 700m
+
+  scheduler:
+    image: boatlab:latest
+    restart: unless-stopped
+    command: python -m boatlab.ops.scheduler
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    mem_limit: 1400m
+    depends_on:
+      - app
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  # 初回構築専用（bootstrap.sh から `--profile init run --rm init` で1回だけ実行）
+  init:
+    image: boatlab:latest
+    profiles: ["init"]
+    command: bash scripts/server_init.sh
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  caddy_data:
+  caddy_config:
