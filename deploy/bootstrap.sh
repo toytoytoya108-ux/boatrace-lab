@@ -37,8 +37,9 @@ echo "== [4/7] .env 生成（初回のみ）"
 IP=$(curl -fsS -4 https://ifconfig.me || hostname -I | awk '{print $1}')
 DOMAIN="${DOMAIN:-$(echo "${IP}" | tr '.' '-').sslip.io}"
 if [ ! -f .env ]; then
-  PASS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)
-  SECRET=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48)
+  # tr|head は pipefail + SIGPIPE で落ちるため openssl を使う
+  PASS=$(openssl rand -hex 8)
+  SECRET=$(openssl rand -hex 24)
   cat > .env <<ENV
 DOMAIN=${DOMAIN}
 BOATLAB_PASSWORD=${PASS}
