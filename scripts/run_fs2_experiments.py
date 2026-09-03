@@ -24,7 +24,8 @@ def load_data():
                               ["race_id", "race_date", "lane", "regno", "finish_pos",
                                "y_win", "y_top2", "y_top3", "completeness"]))
     X = build_entry_dataset(D0, END, columns=keep)
-    R = build_race_dataset(date(2024, 1, 1), date(2025, 6, 30))
+    # run_probs は period_start の holdout_months 前からの結果を参照する
+    R = build_race_dataset(date(2023, 9, 1), date(2025, 6, 30))
     log.info("X=%s R=%s", X.shape, R.shape)
     return X, R
 
@@ -37,7 +38,7 @@ def one_run(X, R, label, groups):
                        half_life_years=None, num_rounds=400, train_max_rows=1_200_000,
                        label=f"fs2:{label}", feature_groups=tuple(groups))
         t = time.time()
-        store = run_probs(X, R.rename(columns={"trifecta_payout": "tri_amount2"}).rename(columns={"tri_amount2": "trifecta_payout"}), cfg)
+        store = run_probs(X, R, cfg)
         store.save(path)
         log.info("[%s] run_probs done in %.0fs", label, time.time() - t)
     q = probs_quality(store)
