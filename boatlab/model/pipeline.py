@@ -21,6 +21,7 @@ from boatlab.features.build import FEATURE_SET_VERSION, NUMERIC_FEATURES
 from boatlab.model.calibration import ComboCalibrator, SetCalibrator
 from boatlab.model.market import MarketOddsModel
 from boatlab.model.selection import SELECTION_VERSION, SelectionParams, decide, labels, select_points
+from boatlab.model.staking import StakingParams, allocate
 from boatlab.model.strength import BaselineProgramLogit, StrengthModel
 from boatlab.model.trifecta import PERM_LABELS, PERMS, fit_lambdas, race_matrix, trifecta_probs
 
@@ -104,9 +105,14 @@ class Predictor:
         return cls(strength=st, **payload)
 
     # ---------------- 予想
-    def predict_races(self, x: pd.DataFrame, odds_by_race: dict[int, np.ndarray] | None = None) -> list[dict]:
-        """x: build_features の出力（対象レース群）。odds_by_race: 実オッズ(120)。無ければ推定。"""
+    def predict_races(self, x: pd.DataFrame, odds_by_race: dict[int, np.ndarray] | None = None,
+                      staking: StakingParams | None = None) -> list[dict]:
+        """x: build_features の出力（対象レース群）。odds_by_race: 実オッズ(120)。無ければ推定。
+
+        staking: 15点への資金配分（設定値）。None なら均等（selection.stake 円×点数）。
+        """
         odds_by_race = odds_by_race or {}
+        staking = staking or StakingParams(method="uniform", total=self.selection.stake * 15)
         pred = self.strength.predict(x)
         mats = tuple(race_matrix(pred, x, c)[0] for c in ("p_win", "p_top2", "p_top3"))
         ids = race_matrix(pred, x, "p_win")[1]
@@ -123,7 +129,9 @@ class Predictor:
             odds = real if use_real else odds_est[i]
             sel = select_points(p[i], odds, self.selection)
             C = float(self.set_cal.transform(np.array([sel.S]))[0])
-            flags = {"odds_estimated": not use_real, "hole_relaxed": sel.hole_relaxed}
+            flags = {"odds_estimated": not use_real, "hole_relaxed": sel.hole_relaxed, "staking": staking.method}
+            pts = sel.main + sel.hole
+            stakes = allocate(pts, sel.main, p[i], odds, staking)
             decision, reason = decide(C, sel.expected_return, float(comp.get(rid, 0.0)), flags, self.selection)
             xr = x[x["race_id"] == rid].sort_values("lane")
             boat_eval = _boat_eval(xr, pred.loc[xr.index], mats, i)
@@ -134,9 +142,10 @@ class Predictor:
                 "ev": {PERM_LABELS[j]: float(sel.ev[j]) for j in range(120)},
                 "main": labels(sel.main), "hole": labels(sel.hole),
                 "selections": [{"combo": PERM_LABELS[j], "rank": r + 1, "kind": "main" if r < len(sel.main) else "hole",
-                                "stake": self.selection.stake, "prob": float(p[i][j]),
+                                "stake": int(stakes[r]), "prob": float(p[i][j]),
                                 "odds": (None if not np.isfinite(odds[j]) else float(odds[j])), "ev": float(sel.ev[j])}
-                               for r, j in enumerate(sel.main + sel.hole)],
+                               for r, j in enumerate(pts)],
+                "stake_total": int(sum(stakes)), "staking": staking.to_dict(),
                 "S": sel.S, "confidence": C, "expected_return": sel.expected_return,
                 "decision": decision, "skip_reason": reason, "completeness": float(comp.get(rid, 0.0)),
                 "flags": flags, "boat_eval": boat_eval,

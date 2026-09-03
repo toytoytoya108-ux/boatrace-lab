@@ -181,11 +181,19 @@ async function renderModels(m) {
 async function renderSettings(m) {
   const s = await api("/api/settings");
   const rd = s.readiness;
+  const stk = (s.extra && s.extra.staking) || { method: "uniform" };
   m.innerHTML = `<h2>購入候補条件</h2><div class="card"><label>信頼度（下限）<input id="cmin" type="number" step="0.01" value="${s.confidence_min}"></label><label>期待回収率（下限）<input id="emin" type="number" step="0.01" value="${s.ev_min}"></label><label>データ完全性（下限）<input id="cpl" type="number" step="0.05" value="${s.completeness_min}"></label></div>
     <h2>実戦投入条件</h2><div class="card">${Object.entries(rd).map(([k, v]) => `<label>${k}<input id="rd_${k}" type="number" step="0.01" value="${v}"></label>`).join("")}</div>
-    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">買い目は3連単15点（本線10・穴5）、1点200円で固定です。変更はモデル版として管理します。</p>`;
+    <h2>資金配分（1レース合計 ${(s.points * s.stake_per_point).toLocaleString()}円・100円単位）</h2><div class="card">
+      <label>方式<select id="stk_method">${[["uniform","均等（200円×15点）"],["prob","確率比例（本線上位に厚く）"],["payout_equal","払戻均等（オッズ反比例）"],["group","本線/穴で単価を変える"]].map(([k,v]) => `<option value="${k}" ${stk.method === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      <label>確率比例の指数（1=比例、2=より本線集中）<input id="stk_power" type="number" step="0.5" min="0.5" max="4" value="${stk.prob_power ?? 1}"></label>
+      <label>1点の上限（合計に対する割合）<input id="stk_max" type="number" step="0.05" min="0.1" max="1" value="${stk.max_share ?? 0.3}"></label>
+      <label>本線1点（group・100円単位）<input id="stk_main" type="number" step="100" value="${stk.main_stake ?? 100}"></label><label>穴1点（group・100円単位）<input id="stk_hole" type="number" step="100" value="${stk.hole_stake ?? 400}"></label>
+      <p class="muted">配分は買い目の選定には影響しません（的中率は同じ）。検証期間では方式による回収率差はなく、変わるのは払戻の分布です（reports: staking_compare）。</p></div>
+    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">買い目は3連単15点（本線10・穴5）で固定。変更は設定版として記録され、過去の予想には影響しません。</p>`;
   $("#save").onclick = async () => {
-    const body = { confidence_min: +$("#cmin").value, ev_min: +$("#emin").value, completeness_min: +$("#cpl").value, readiness: Object.fromEntries(Object.keys(rd).map(k => [k, +$("#rd_" + k).value])) };
+    const staking = { method: $("#stk_method").value, prob_power: +$("#stk_power").value, max_share: +$("#stk_max").value, main_stake: +$("#stk_main").value, hole_stake: +$("#stk_hole").value, min_per_point: 100, unit: 100 };
+    const body = { confidence_min: +$("#cmin").value, ev_min: +$("#emin").value, completeness_min: +$("#cpl").value, readiness: Object.fromEntries(Object.keys(rd).map(k => [k, +$("#rd_" + k).value])), extra: Object.assign({}, s.extra || {}, { staking }) };
     await api("/api/settings", { method: "PUT", body: JSON.stringify(body) }); alert("保存しました"); render();
   };
 }

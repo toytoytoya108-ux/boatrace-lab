@@ -24,6 +24,7 @@ from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
 from boatlab.model.selection import SelectionParams
+from boatlab.model.staking import StakingParams
 from boatlab.model.trifecta import PERM_LABELS, combo_index
 from boatlab.store.db import session_scope
 from boatlab.store.models import (
@@ -64,13 +65,24 @@ def ingest_today(fetcher: Fetcher, d: date | None = None) -> dict:
 
 
 # ---------------------------------------------------------------- predict
-def _settings_id(s) -> int:
+def _settings_row(s) -> SettingsVersion:
     row = s.execute(select(SettingsVersion).order_by(SettingsVersion.id.desc())).scalars().first()
     if row is None:
         row = SettingsVersion()
         s.add(row)
         s.flush()
-    return row.id
+    return row
+
+
+def _settings_id(s) -> int:
+    return _settings_row(s).id
+
+
+def staking_from_settings(row: SettingsVersion) -> StakingParams:
+    """設定の extra.staking（無ければ均等 stake_per_point×points）。合計は points×stake_per_point に固定。"""
+    d = dict((row.extra or {}).get("staking") or {})
+    d.setdefault("total", int(row.points or 15) * int(row.stake_per_point or 200))
+    return StakingParams.from_dict(d)
 
 
 def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: date | None = None,
@@ -87,7 +99,9 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
         races = s.execute(select(Race).where(Race.race_date == d, Race.status != "cancelled")).scalars().all()
         done = {rid for (rid,) in s.execute(select(Prediction.race_id).where(
             Prediction.model_version == predictor.version, Prediction.stage == stage, Prediction.role == role))}
-        settings_id = _settings_id(s)
+        srow = _settings_row(s)
+        settings_id = srow.id
+        staking = staking_from_settings(srow)
     targets = []
     for r in races:
         if r.id in done or r.closed_at is None:
@@ -118,7 +132,7 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
                            .order_by(OddsSnapshot.captured_at)).scalars():
             if (now - o.captured_at).total_seconds() <= 15 * 60:
                 odds_by_race[o.race_id] = (o.id, np.array([np.nan if o.odds.get(k) is None else float(o.odds[k]) for k in PERM_LABELS]))
-    outs = predictor.predict_races(x, {k: v[1] for k, v in odds_by_race.items()})
+    outs = predictor.predict_races(x, {k: v[1] for k, v in odds_by_race.items()}, staking=staking)
     n = 0
     with session_scope() as s:
         race_map = {r.id: r for r in targets}
@@ -171,8 +185,9 @@ def score_pending() -> dict:
             tri = combo_index(res.trifecta) if res.trifecta else None
             sel_idx = [combo_index(x.combo) for x in sels]
             main_idx = [combo_index(x.combo) for x in sels if x.kind == "main"]
+            stakes = [int(x.stake) for x in sels]
             sc = score_race(sel_idx, main_idx, -1 if tri is None else tri, res.trifecta_payout, res.refunds or [],
-                            sels[0].stake if sels else 200, cancelled=(r.status == "cancelled"))
+                            sels[0].stake if sels else 200, cancelled=(r.status == "cancelled"), stakes=stakes or None)
             valid = invalid is None and sc["valid"]
             hit = sc["hit"] if valid else None
             cat = None
@@ -181,7 +196,7 @@ def score_pending() -> dict:
             pred_odds = next((x.odds_at_pred for x in sels if tri is not None and x.combo == PERM_LABELS[tri]), None)
             s.add(Scoring(prediction_id=pid, race_id=p.race_id, valid=valid, invalid_reason=invalid,
                           actual_trifecta=res.trifecta, actual_payout=res.trifecta_payout, hit=hit, hit_kind=sc["hit_kind"] if valid else None,
-                          refunded_points=sc["refunded_points"], refunded_stake=sc["refunded_points"] * (sels[0].stake if sels else 200),
+                          refunded_points=sc["refunded_points"], refunded_stake=sc["refunded_stake"],
                           stake_total=sc["stake_total"], payout_total=sc["payout_total"], pnl=sc["pnl"],
                           roi=(sc["payout_total"] / sc["stake_total"] if sc["stake_total"] else None), category=cat,
                           odds_final_ratio=((res.trifecta_payout / 100) / pred_odds if (pred_odds and res.trifecta_payout) else None)))

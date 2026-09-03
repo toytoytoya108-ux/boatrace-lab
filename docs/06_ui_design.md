@@ -65,3 +65,9 @@
 ## 4. API（主要エンドポイント）
 
 `GET /api/today`、`GET /api/races?date=`、`GET /api/races/{id}`（予想・120通り・根拠・結果）、`GET /api/stats?range=`、`GET /api/stats/breakdown?by=`、`GET /api/readiness`（実戦投入判定）、`GET /api/models`、`POST /api/models/{v}/activate`、`GET /api/backtests`、`GET /api/settings`、`PUT /api/settings`、`POST /api/import/csv`、`GET /api/health`。
+
+## 追補（2026-09-03）資金配分の設定
+
+設定タブに「資金配分」を追加：方式（均等／確率比例／払戻均等／本線・穴グループ）、確率比例の指数、1点上限の割合、グループ単価。
+保存すると新しい設定版として記録され（`extra.staking`）、以後の予想から適用される。過去の予想・採点は保存時の点ごとの金額で固定。
+レース詳細の買い目には点ごとの金額が表示される（合計は常に 3,000円）。

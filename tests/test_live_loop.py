@@ -34,13 +34,20 @@ def test_train_predict_score(tmp_path, monkeypatch):
     from boatlab.model.pipeline import Predictor
     pr2 = Predictor.load("test-0.1")
     d = date(2018, 7, 5)
+    # 設定：資金配分＝確率比例2乗（extra.staking）
+    from boatlab.store.models import SettingsVersion
+    with dbmod.session_scope() as s:
+        s.add(SettingsVersion(extra={"staking": {"method": "prob", "prob_power": 2.0}}))
     out = daily.predict_pending(pr2, "final", d=d, now=datetime(2018, 7, 5, 8, 0))
     assert out["predicted"] > 100
     from boatlab.store.models import Prediction, PredictionSelection, Scoring
     with dbmod.session_scope() as s:
-        p = s.execute(select(Prediction)).scalars().first()
+        p = s.execute(select(Prediction).where(Prediction.model_version == "test-0.1")).scalars().first()
         sels = s.execute(select(PredictionSelection).where(PredictionSelection.prediction_id == p.id)).scalars().all()
         assert len(sels) == 15 and sum(1 for x in sels if x.kind == "hole") == 5
+        stakes = [x.stake for x in sorted(sels, key=lambda x: x.rank)]
+        assert sum(stakes) == 3000 and all(x % 100 == 0 and x >= 100 for x in stakes) and stakes[0] >= stakes[-1]
+        assert p.flags.get("staking") == "prob"
         assert abs(sum(p.probs.values()) - 1.0) < 1e-6
         assert 0 <= p.confidence <= 1 and p.decision in ("buy", "skip")
     sc = daily.score_pending()
@@ -49,3 +56,12 @@ def test_train_predict_score(tmp_path, monkeypatch):
         rows = s.execute(select(Scoring)).scalars().all()
         # 過去日シミュレーション → created_at > 締切 → 全件 invalid（リーク検査が働いている）
         assert all(r.valid is False and r.invalid_reason == "created_after_close" for r in rows)
+    # 採点は点ごとの賭け金で行われる（有効行は無いので score_race を直接確認）
+    from boatlab.backtest.metrics import score_race
+    from boatlab.model.trifecta import combo_index
+    with dbmod.session_scope() as s:
+        p = s.execute(select(Prediction).where(Prediction.model_version == "test-0.1")).scalars().first()
+        sels = sorted(s.execute(select(PredictionSelection).where(PredictionSelection.prediction_id == p.id)).scalars().all(), key=lambda x: x.rank)
+        idx = [combo_index(x.combo) for x in sels]
+        sc = score_race(idx, idx[:10], idx[0], 1000, [], stakes=[x.stake for x in sels])
+        assert sc["payout_total"] == sels[0].stake * 10 and sc["stake_total"] == 3000

@@ -15,19 +15,23 @@ from boatlab.model.trifecta import PERMS
 
 
 def score_race(sel_idx: list[int], main_idx: list[int], tri_idx: int, payout: int | None, refund_lanes: list[int],
-               stake: int = 200, cancelled: bool = False) -> dict:
-    """15点を採点する。返還艇を含む買い目は投資から除外。払戻は100円あたり → stake/100 倍。"""
+               stake: int = 200, cancelled: bool = False, stakes: list[int] | None = None) -> dict:
+    """15点を採点する。返還艇を含む買い目は投資から除外。払戻は100円あたり → 賭け金/100 倍。
+
+    stakes: 点ごとの賭け金（sel_idx と同順）。None なら全点 stake 円。
+    """
     if cancelled or tri_idx is None or tri_idx < 0:
-        return dict(valid=False, hit=None, hit_kind=None, stake_total=0, payout_total=0, pnl=0, refunded_points=0)
+        return dict(valid=False, hit=None, hit_kind=None, stake_total=0, payout_total=0, pnl=0, refunded_points=0, refunded_stake=0)
+    st = {i: (int(stakes[k]) if stakes is not None else int(stake)) for k, i in enumerate(sel_idx)}
     refund = set(int(l) - 1 for l in (refund_lanes or []))
     refunded = [i for i in sel_idx if set(PERMS[i]) & refund]
     live = [i for i in sel_idx if i not in refunded]
-    stake_total = stake * len(live)
+    stake_total = sum(st[i] for i in live)
     hit = tri_idx in live
-    payout_total = int(round((payout or 0) * stake / 100)) if hit else 0
+    payout_total = int(round((payout or 0) * st[tri_idx] / 100)) if hit else 0
     return dict(valid=True, hit=hit, hit_kind=("main" if hit and tri_idx in main_idx else ("hole" if hit else None)),
                 stake_total=stake_total, payout_total=payout_total, pnl=payout_total - stake_total,
-                refunded_points=len(refunded))
+                refunded_points=len(refunded), refunded_stake=sum(st[i] for i in refunded))
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -86,10 +90,12 @@ def summarize(rec: pd.DataFrame, label: str = "") -> dict:
             "avg_expected_return": float(sub["expected_return"].mean()) if n else float("nan"),
         }
         if n:
-            hole_stake = n * 5 * 200.0
+            # 点ごとの配分がある場合は実際の本線/穴投資額で割る（無ければ均等200円と仮定）
+            hole_stake = float(sub["hole_stake"].sum()) if "hole_stake" in sub else n * 5 * 200.0
+            main_stake = float(sub["main_stake"].sum()) if "main_stake" in sub else n * 10 * 200.0
             hole_pay = float(sub.loc[sub["hit_kind"] == "hole", "payout_total"].sum())
-            d["hole_roi"] = hole_pay / hole_stake
-            d["main_roi"] = float(sub.loc[sub["hit_kind"] == "main", "payout_total"].sum()) / (n * 10 * 200.0)
+            d["hole_roi"] = hole_pay / max(hole_stake, 1)
+            d["main_roi"] = float(sub.loc[sub["hit_kind"] == "main", "payout_total"].sum()) / max(main_stake, 1)
         out[name] = d
     out["buy_rate"] = (out["buy"]["n"] / out["all"]["n"]) if out["all"]["n"] else float("nan")
     out["skip_would_hit"] = int(v[(v["decision"] == "skip") & (v["hit"] == True)].shape[0])  # noqa: E712

@@ -144,8 +144,9 @@ def run_probs(X: pd.DataFrame, R: pd.DataFrame, cfg: WFConfig) -> ProbStore:
 
 
 def evaluate(store: ProbStore, R: pd.DataFrame, prm: SelectionParams, use_real_odds: bool = True,
-             X_completeness: pd.Series | None = None) -> pd.DataFrame:
-    """選定パラメータを当てて採点。実オッズ（2026〜）があればそれを使う。"""
+             X_completeness: pd.Series | None = None, staking: "StakingParams | None" = None) -> pd.DataFrame:
+    """選定パラメータを当てて採点。実オッズ（2026〜）があればそれを使う。staking で点ごとの配分を変える。"""
+    from boatlab.model.staking import allocate
     R = R.set_index("race_id")
     records: list[dict] = []
     for per in store.periods:
@@ -165,8 +166,11 @@ def evaluate(store: ProbStore, R: pd.DataFrame, prm: SelectionParams, use_real_o
             comp = float(X_completeness.get(rid, 1.0)) if X_completeness is not None else 1.0
             decision, reason = decide(C, sel.expected_return, comp, {}, prm)
             tri = int(per.test_tri[i])
-            sc = score_race(sel.main + sel.hole, sel.main, tri, row["trifecta_payout"], row["refund_lanes"], prm.stake,
-                            cancelled=(row["status"] == "cancelled"))
+            pts = sel.main + sel.hole
+            stakes = allocate(pts, sel.main, per.test_p[i], odds, staking) if staking is not None else None
+            sc = score_race(pts, sel.main, tri, row["trifecta_payout"], row["refund_lanes"], prm.stake,
+                            cancelled=(row["status"] == "cancelled"), stakes=stakes)
+            stake_hit = (stakes[pts.index(tri)] if (stakes is not None and tri in pts) else (prm.stake if tri in pts else 0))
             records.append(dict(
                 race_id=rid, race_date=row["race_date"], stadium_code=row["stadium_code"], grade=row["grade"],
                 period=per.period, decision=decision, skip_reason=reason, confidence=C, S=sel.S,
@@ -175,6 +179,9 @@ def evaluate(store: ProbStore, R: pd.DataFrame, prm: SelectionParams, use_real_o
                 main=sel.main, hole=sel.hole, actual_idx=tri, actual_payout=row["trifecta_payout"],
                 hole_odds_mean=float(np.nanmean(odds[sel.hole])) if sel.hole else np.nan,
                 completeness=comp, logp_actual=(float(np.log(max(per.test_p[i][tri], 1e-12))) if tri >= 0 else np.nan),
+                stake_hit=stake_hit, stake_min=(min(stakes) if stakes else prm.stake), stake_max=(max(stakes) if stakes else prm.stake),
+                main_stake=(sum(stakes[:len(sel.main)]) if stakes else prm.stake * len(sel.main)),
+                hole_stake=(sum(stakes[len(sel.main):]) if stakes else prm.stake * len(sel.hole)),
                 **sc,
             ))
     return pd.DataFrame(records)

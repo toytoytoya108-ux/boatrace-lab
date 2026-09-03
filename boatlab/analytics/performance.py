@@ -21,7 +21,9 @@ def load_scored(model_version: str | None = None, role: str = "active", stage: s
         SELECT sc.*, p.model_version, p.decision, p.confidence, p.expected_return, p.flags, p.created_at,
                r.race_date, r.stadium_code, r.grade, r.race_no, s.name AS stadium,
                (SELECT AVG(ps.odds_at_pred) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS avg_odds,
-               (SELECT AVG(ps.odds_at_pred) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='hole') AS hole_avg_odds
+               (SELECT AVG(ps.odds_at_pred) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='hole') AS hole_avg_odds,
+               (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='main') AS main_stake,
+               (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='hole') AS hole_stake
         FROM scoring sc JOIN predictions p ON p.id = sc.prediction_id
         JOIN races r ON r.id = sc.race_id JOIN stadiums s ON s.code = r.stadium_code
         WHERE p.role = :role AND p.stage = :stage AND sc.valid = 1"""
@@ -52,8 +54,10 @@ def _block(v: pd.DataFrame) -> dict:
     if n:
         d["main_hit_rate"] = d["main_hits"] / n
         d["hole_hit_rate"] = d["hole_hits"] / n
-        d["hole_roi"] = float(v.loc[v["hit_kind"] == "hole", "payout_total"].sum()) / (n * 5 * 200)
-        d["main_roi"] = float(v.loc[v["hit_kind"] == "main", "payout_total"].sum()) / (n * 10 * 200)
+        hs = float(v["hole_stake"].fillna(0).sum()) if "hole_stake" in v else n * 5 * 200
+        ms = float(v["main_stake"].fillna(0).sum()) if "main_stake" in v else n * 10 * 200
+        d["hole_roi"] = float(v.loc[v["hit_kind"] == "hole", "payout_total"].sum()) / max(hs, 1)
+        d["main_roi"] = float(v.loc[v["hit_kind"] == "main", "payout_total"].sum()) / max(ms, 1)
     return d
 
 
