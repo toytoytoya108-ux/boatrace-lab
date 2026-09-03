@@ -41,12 +41,13 @@ def build_entry_dataset(d0: date, d1: date, use_cache: bool = True, columns: lis
     cp = _cache_path(d0, d1)
     if use_cache and cp.exists():
         return pd.read_parquet(cp, columns=columns)
-    from boatlab.features.asof import AsofTables, perf_log
-    from boatlab.features.perf_history import load_perf_frames
+    from boatlab.features.asof import AsofTables, perf_log_ext
+    from boatlab.features.perf_history import load_ext_frames, load_perf_frames
 
     races, entries_min, result_entries = load_perf_frames(d0, d1)
-    tables = AsofTables(perf_log(races, entries_min, result_entries))
-    del races, entries_min
+    results_k, previews_e, conditions_w = load_ext_frames(d0, d1)
+    tables = AsofTables(perf_log_ext(races, entries_min, result_entries, results_k, previews_e, conditions_w))
+    del races, entries_min, results_k, previews_e, conditions_w
 
     from datetime import timedelta
 

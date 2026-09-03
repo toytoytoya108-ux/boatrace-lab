@@ -47,6 +47,7 @@ class WFConfig:
     lam_fixed: tuple[float, float] | None = None   # None なら holdout で探索
     train_max_rows: int | None = None              # 探索時の間引き（None=全件）
     label: str = "lgb"
+    feature_groups: tuple = ()                     # fs2 追加特徴量グループ（build.FEATURE_GROUPS のキー）
 
 
 @dataclass
@@ -86,8 +87,11 @@ def _make_model(cfg: WFConfig):
         return BaselineCourseRate()
     if cfg.model == "m0b":
         return BaselineProgramLogit()
+    from boatlab.features.build import CATEGORICAL_FEATURES, FEATURE_GROUPS, NUMERIC_FEATURES
+    extra = [f for g in (cfg.feature_groups or ()) for f in FEATURE_GROUPS[g]]
     return StrengthModel(num_rounds=cfg.num_rounds, half_life_years=cfg.half_life_years,
-                         params={**StrengthModel().params, **cfg.lgb_params})
+                         params={**StrengthModel().params, **cfg.lgb_params},
+                         feature_names=NUMERIC_FEATURES + extra + CATEGORICAL_FEATURES)
 
 
 def _mats(model, x: pd.DataFrame):

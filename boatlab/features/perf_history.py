@@ -24,3 +24,23 @@ def load_perf_frames(d0: date, d1: date):
         FROM entries e JOIN races r ON r.id = e.race_id
         WHERE r.race_date BETWEEN :d0 AND :d1"""), eng, params={"d0": str(d0), "d1": str(d1)})
     return races, entries, result_entries
+
+
+def load_ext_frames(d0: date, d1: date):
+    """fs2 拡張用の追加フレーム（決まり手・展示タイム・風）。軽量列のみ。"""
+    eng = get_engine()
+    par = {"d0": str(d0), "d1": str(d1)}
+    results = pd.read_sql_query(text("""
+        SELECT res.race_id, res.kimarite FROM results res JOIN races r ON r.id = res.race_id
+        WHERE r.race_date BETWEEN :d0 AND :d1"""), eng, params=par)
+    previews = pd.read_sql_query(text("""
+        SELECT p.race_id, p.lane, p.exhibition_time
+        FROM preview_snapshots p JOIN races r ON r.id = p.race_id
+        WHERE r.race_date BETWEEN :d0 AND :d1 AND p.exhibition_time IS NOT NULL
+          AND (r.closed_at IS NULL OR p.fetched_at <= r.closed_at)"""), eng, params=par)
+    conditions = pd.read_sql_query(text("""
+        SELECT c.race_id, c.wind_dir, c.wind_speed_m
+        FROM race_conditions c JOIN races r ON r.id = c.race_id
+        WHERE r.race_date BETWEEN :d0 AND :d1 AND c.phase='preview'"""), eng, params=par)
+    conditions = conditions.drop_duplicates("race_id")
+    return results, previews, conditions

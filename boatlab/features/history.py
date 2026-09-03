@@ -47,7 +47,7 @@ def load_history(d0: date | None = None, d1: date | None = None,
     src_list = ",".join(f"'{s}'" for s in preview_sources)
     previews = _read(f"""
         SELECT p.race_id, p.lane, p.course, p.st_exh, p.exhibition_time, p.tilt, p.weight AS pv_weight,
-               p.weight_adj, p.fetched_at, p.source
+               p.weight_adj, p.parts, p.fetched_at, p.source
         FROM preview_snapshots p JOIN races r ON r.id = p.race_id
         WHERE p.race_id IN ({ids}) AND p.source IN ({src_list})
           AND (r.closed_at IS NULL OR p.fetched_at <= r.closed_at)

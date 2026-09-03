@@ -42,19 +42,25 @@ class StrengthModel:
     seeds: tuple[int, ...] = (7,)
     feature_names: list[str] = field(default_factory=lambda: NUMERIC_FEATURES + CATEGORICAL_FEATURES)
 
+    def _split(self):
+        cat = [c for c in self.feature_names if c in CATEGORICAL_FEATURES]
+        num = [c for c in self.feature_names if c not in CATEGORICAL_FEATURES]
+        return num, cat
+
     def fit(self, x: pd.DataFrame, asof: pd.Timestamp, valid: pd.DataFrame | None = None) -> "StrengthModel":
-        m = feature_matrix(x)
+        num, cat = self._split()
+        m = feature_matrix(x, num, cat)
         w = time_decay_weights(x["race_date"], asof, self.half_life_years)
         for t in TARGETS:
             ok = x[t].notna() & x["finish_pos"].notna()
             ds = lgb.Dataset(m[ok], label=x.loc[ok, t].values, weight=w[ok.values],
-                             categorical_feature=CATEGORICAL_FEATURES, free_raw_data=False)
+                             categorical_feature=cat, free_raw_data=False)
             kwargs = {}
             if valid is not None and len(valid):
-                mv = feature_matrix(valid)
+                mv = feature_matrix(valid, num, cat)
                 okv = valid[t].notna() & valid["finish_pos"].notna()
                 dv = lgb.Dataset(mv[okv], label=valid.loc[okv, t].values, reference=ds,
-                                 categorical_feature=CATEGORICAL_FEATURES)
+                                 categorical_feature=cat)
                 kwargs = dict(valid_sets=[dv], callbacks=[lgb.early_stopping(50, verbose=False)])
             for sd in self.seeds:
                 params = {**self.params, "seed": sd, "bagging_seed": sd, "feature_fraction_seed": sd}
@@ -62,7 +68,16 @@ class StrengthModel:
         return self
 
     def predict(self, x: pd.DataFrame) -> pd.DataFrame:
-        m = feature_matrix(x)
+        # 学習時の特徴量名を booster から復元（旧モデルの後方互換も担保）
+        names = None
+        for b in self.boosters.values():
+            names = b.feature_name()
+            break
+        if names is None:
+            names = list(getattr(self, "feature_names", NUMERIC_FEATURES + CATEGORICAL_FEATURES))
+        num = [c for c in names if c not in CATEGORICAL_FEATURES]
+        cat = [c for c in names if c in CATEGORICAL_FEATURES]
+        m = feature_matrix(x, num, cat)
         out = pd.DataFrame(index=x.index)
         for t in TARGETS:
             preds = [b.predict(m, num_iteration=b.best_iteration or None)

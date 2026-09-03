@@ -11,10 +11,10 @@ import json
 import numpy as np
 import pandas as pd
 
-from boatlab.features.asof import AsofTables, attach_asof, cumulative_table, perf_log, shrink
+from boatlab.features.asof import AsofTables, attach_asof, attach_form, cumulative_table, perf_log, perf_log_ext, shrink, wind_bucket
 from boatlab.features.history import HistoryFrames
 
-FEATURE_SET_VERSION = "fs1"
+FEATURE_SET_VERSION = "fs2"
 
 RACE_TYPE_MAP = {"予選": "yosen", "一般": "ippan", "準優勝戦": "junyu", "優勝戦": "yusho", "特別選抜": "tokusen",
                  "選抜": "senbatsu", "特選": "tokusen"}
@@ -51,6 +51,22 @@ def base_frame(target: HistoryFrames) -> pd.DataFrame:
     x = x.rename(columns={"course": "course_exh"})
     # 予想進入コース：スタート展示の進入。無ければ艇番（docs/04 §2）
     x["course_pred"] = x["course_exh"].fillna(x["lane"]).astype(int)
+    # 部品交換（直前情報。2026年〜のみ値がある）
+    if "parts" in x.columns:
+        def _pn(v):
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                return np.nan
+            try:
+                lst = json.loads(v) if isinstance(v, str) else v
+                return float(len(lst)) if isinstance(lst, list) else np.nan
+            except Exception:
+                return np.nan
+        x["parts_n"] = x["parts"].map(_pn)
+        major = ("ピストン", "リング", "シリンダ", "クランク", "ギヤ", "キャブ", "電気")
+        x["parts_major"] = x["parts"].map(lambda v: float(any(m in str(v) for m in major)) if isinstance(v, str) and v not in ("", "null", "[]") else (np.nan if v is None or (isinstance(v, float) and np.isnan(v)) else 0.0))
+    else:
+        x["parts_n"] = np.nan
+        x["parts_major"] = np.nan
     x["race_type_cat"] = x["race_type"].map(_race_type)
     x["klass_ord"] = x["klass"].map(KLASS_ORD)
     x["month"] = x["race_date"].dt.month
@@ -58,7 +74,12 @@ def base_frame(target: HistoryFrames) -> pd.DataFrame:
 
 
 def add_asof_features(x: pd.DataFrame, hist: HistoryFrames | AsofTables) -> pd.DataFrame:
-    tables = hist if isinstance(hist, AsofTables) else AsofTables(perf_log(hist.races, hist.entries, hist.result_entries))
+    if isinstance(hist, AsofTables):
+        tables = hist
+    else:
+        tables = AsofTables(perf_log_ext(hist.races, hist.entries, hist.result_entries,
+                                         getattr(hist, "results", None), getattr(hist, "previews", None),
+                                         getattr(hist, "conditions", None)))
     x = x.copy()
     x["course"] = x["course_pred"].astype("Int64")  # as-of 結合用のキー（予想進入コース）
     x = attach_asof(x, tables.course, ["course"], "g_course")
@@ -72,6 +93,63 @@ def add_asof_features(x: pd.DataFrame, hist: HistoryFrames | AsofTables) -> pd.D
     xm = x
     xm["motor_no"] = xm["motor_no"].astype("Int64")
     x = attach_asof(xm, tables.ms, ["stadium_code", "motor_no"], "ms_90d", window_days=90)
+
+    if getattr(tables, "ext", False):
+        from boatlab.features.asof import CK_COLS, ENTRY_COLS, EXT_RACER_COLS, K_COLS, WX_COLS
+        x = attach_asof(x, tables.rext, ["regno"], "rx", stat_cols=EXT_RACER_COLS)
+        n2 = x["rx_n2"].replace(0, np.nan)
+        x["r_mz_rate"] = x["rx_mz"] / n2
+        x["r_wn_rate"] = x["rx_wn"] / n2
+        x["r_dlane"] = x["rx_dl_sum"] / x["rx_dl_n"].replace(0, np.nan)
+        stn = x["rx_st_n"].replace(0, np.nan)
+        mean_st = x["rx_st_sum"] / stn
+        x["r_st_std"] = np.sqrt(np.clip(x["rx_st2_sum"] / stn - np.square(mean_st), 0, None))
+        x["r_f_rate"] = x["rx_f_n"] / n2
+        wn_ = x["rx_w_n"].replace(0, np.nan)
+        x["r_w_sashi_shr"] = (x["rx_w_sashi"] + x["rx_w_makz"]) / wn_
+        x["r_w_mak_shr"] = x["rx_w_mak"] / wn_
+        x["r_e2_rate"] = x["rx_e2_top2"] / x["rx_e2_n"].replace(0, np.nan)
+        x["r_e2_n"] = x["rx_e2_n"]
+        x = x.drop(columns=[f"rx_{c}" for c in EXT_RACER_COLS])
+        # 選手×枠の進入（全期間）
+        x = attach_asof(x, tables.rl, ["regno", "lane"], "rl", stat_cols=ENTRY_COLS)
+        rln = x["rl_n2"].replace(0, np.nan)
+        x["rl_mz_rate"] = x["rl_mz"] / rln
+        x["rl_dlane"] = x["rl_dl_sum"] / x["rl_dl_n"].replace(0, np.nan)
+        x["rl_n"] = x["rl_n2"]
+        x = x.drop(columns=[f"rl_{c}" for c in ENTRY_COLS])
+        # 選手×コース：ST分散＋決まり手（2年）
+        x = attach_asof(x, tables.rck, ["regno", "course"], "rk", window_days=730, stat_cols=CK_COLS)
+        stn = x["rk_st_n"].replace(0, np.nan)
+        mean_st = x["rk_st_sum"] / stn
+        x["rc_st_std"] = np.sqrt(np.clip(x["rk_st2_sum"] / stn - np.square(mean_st), 0, None))
+        wn_ = x["rk_w_n"].replace(0, np.nan)
+        x["rc_w_nige_shr"] = x["rk_w_nige"] / wn_
+        x["rc_w_sashi_shr"] = (x["rk_w_sashi"] + x["rk_w_makz"]) / wn_
+        x["rc_w_mak_shr"] = x["rk_w_mak"] / wn_
+        x["rc_w_n"] = x["rk_w_n"]
+        x = x.drop(columns=[f"rk_{c}" for c in CK_COLS])
+        # 場×コースの決まり手率（1年）
+        x = attach_asof(x, tables.sck, ["stadium_code", "course"], "sk", window_days=365, stat_cols=K_COLS)
+        wn_ = x["sk_w_n"].replace(0, np.nan)
+        x["sck_nige_rate"] = x["sk_w_nige"] / wn_
+        x["sck_sashi_rate"] = (x["sk_w_sashi"] + x["sk_w_makz"]) / wn_
+        x["sck_mak_rate"] = x["sk_w_mak"] / wn_
+        x = x.drop(columns=[f"sk_{c}" for c in K_COLS])
+        # 場×コース×風（3年）
+        sec, stg = wind_bucket(x.get("wind_dir"), x.get("wind_speed_m"))
+        x["wsec"] = sec.values
+        x["wstr"] = stg.values
+        x = attach_asof(x, tables.scw, ["stadium_code", "course", "wsec", "wstr"], "swc", window_days=1095, stat_cols=WX_COLS)
+        swn = x["swc_n"].replace(0, np.nan)
+        x["swc_win_rate"] = x["swc_win"] / swn
+        x["swc_top2_rate"] = x["swc_top2"] / swn
+        x["swc_win_delta"] = x["swc_win_rate"] - x["sc_1y_win_rate"]
+        x = x.drop(columns=["swc_win", "swc_top2", "swc_top3", "wsec", "wstr"])
+        # 直近5走・10走（走数ベース）
+        x = attach_form(x, tables.form, "r")
+        # 今節（同一場×直近10日）
+        x = attach_asof(x, tables.rs, ["regno", "stadium_code"], "rs10", window_days=10)
 
     # 縮約（少サンプルの暴れを抑える）。事前分布 = コース別全体1着率（as-of）
     prior_win = x["g_course_win_rate"].fillna(0.17)
@@ -96,6 +174,13 @@ def add_relative_features(x: pd.DataFrame) -> pd.DataFrame:
     # 1号艇との差（本命度）
     lane1 = x[x["lane"] == 1].set_index("race_id")["nat_win_rate"]
     x["nat_win_vs_lane1"] = x["nat_win_rate"] - x["race_id"].map(lane1)
+    # 進入関連の相対量（fs2）
+    if "r_mz_rate" in x.columns:
+        x["course_pred_dlane"] = x["course_pred"] - x["lane"]
+        mz = x["r_mz_rate"].fillna(0.0)
+        tot = mz.groupby(x["race_id"]).transform("sum")
+        x["mz_others_sum"] = tot - mz
+        x["mz_race_max"] = mz.groupby(x["race_id"]).transform("max")
     return x
 
 
@@ -145,10 +230,28 @@ NUMERIC_FEATURES = [
 ]
 CATEGORICAL_FEATURES = ["stadium_code", "grade", "race_type_cat", "weather", "wind_dir"]
 
+# fs2 追加グループ（1グループずつ効果検証する。docs/04 §15）
+FEATURE_GROUPS = {
+    "entry":    ["r_mz_rate", "r_wn_rate", "r_dlane", "rl_mz_rate", "rl_dlane", "rl_n",
+                 "course_pred_dlane", "mz_others_sum", "mz_race_max"],
+    "st":       ["r_st_std", "r_f_rate", "rc_st_std"],
+    "kimarite": ["r_w_sashi_shr", "r_w_mak_shr", "rc_w_nige_shr", "rc_w_sashi_shr", "rc_w_mak_shr", "rc_w_n",
+                 "sck_nige_rate", "sck_sashi_rate", "sck_mak_rate"],
+    "weather":  ["swc_n", "swc_win_rate", "swc_top2_rate", "swc_win_delta"],
+    "form":     ["r_l5_win_rate", "r_l5_top3_rate", "r_l5_avg_fin", "r_l5_avg_st",
+                 "r_l10_win_rate", "r_l10_top3_rate", "r_l10_avg_fin", "r_l10_avg_st",
+                 "rs10_n", "rs10_win_rate", "rs10_top2_rate", "rs10_avg_fin", "rs10_avg_st"],
+    "exh_trust": ["r_e2_rate", "r_e2_n"],
+    "parts":    ["parts_n", "parts_major"],
+}
+ALL_GROUP_FEATURES = [f for cols in FEATURE_GROUPS.values() for f in cols]
 
-def feature_matrix(x: pd.DataFrame) -> pd.DataFrame:
-    m = x[NUMERIC_FEATURES].astype("float32").copy()
-    for c in CATEGORICAL_FEATURES:
+
+def feature_matrix(x: pd.DataFrame, numeric: list[str] | None = None, categorical: list[str] | None = None) -> pd.DataFrame:
+    num = list(numeric or NUMERIC_FEATURES)
+    cat = list(categorical or CATEGORICAL_FEATURES)
+    m = x[num].astype("float32").copy()
+    for c in cat:
         m[c] = x[c].astype("category")
     return m
 
