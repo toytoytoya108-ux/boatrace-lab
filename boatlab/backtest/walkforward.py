@@ -102,13 +102,26 @@ def _mats(model, x: pd.DataFrame):
     return (pw, p2, p3), ids
 
 
-def run_probs(X: pd.DataFrame, R: pd.DataFrame, cfg: WFConfig) -> ProbStore:
+def run_probs(X: pd.DataFrame, R: pd.DataFrame, cfg: WFConfig, checkpoint: "str | Path | None" = None) -> ProbStore:
+    """checkpoint を渡すと各期の完了時に部分ストアを保存し、再開時は済んだ期をスキップする
+    （コンテナ再利用で 40 分ジョブが途中で落ちる環境向け）。"""
     R = R.set_index("race_id")
     starts = pd.date_range(cfg.period_start, cfg.period_end, freq=cfg.freq)
     out: list[PeriodProbs] = []
+    done_periods: set[str] = set()
+    if checkpoint and Path(checkpoint).exists():
+        try:
+            prev = ProbStore.load(checkpoint)
+            out = list(prev.periods)
+            done_periods = {pp.period for pp in out}
+            log.info("[%s] resume from checkpoint: %d periods done", cfg.label, len(out))
+        except Exception as e:
+            log.warning("checkpoint load failed: %r", e)
     model = None
     market_pub = None
     for k, ps in enumerate(starts):
+        if str(ps.date()) in done_periods:
+            continue
         pe = min((ps + pd.tseries.frequencies.to_offset(cfg.freq)) - pd.Timedelta(days=1), pd.Timestamp(cfg.period_end))
         hs = ps - pd.DateOffset(months=cfg.holdout_months)
         mask_train = (X["race_date"] < hs) & X["finish_pos"].notna()
@@ -142,6 +155,8 @@ def run_probs(X: pd.DataFrame, R: pd.DataFrame, cfg: WFConfig) -> ProbStore:
         out.append(PeriodProbs(str(ps.date()), ids_h, p_h.astype(np.float32), odds_h.astype(np.float32), tri_h,
                                ids_t, p_t.astype(np.float32), odds_t.astype(np.float32), tri_t, lam, mk.fit_report, int(len(train))))
         log.info("[%s] period %s: train=%d hold=%d test=%d lam=%s market=%s", cfg.label, ps.date(), len(train), len(ids_h), len(ids_t), lam, mk.fit_report)
+        if checkpoint:
+            ProbStore(cfg, out).save(checkpoint)  # 期ごとにチェックポイント
         del train, hold, test, mats_h, mats_t, p_raw_h, p_h, p_t, q_h, odds_h, odds_t
         gc.collect()
     return ProbStore(cfg, out)

@@ -43,8 +43,10 @@ def one_run(label, groups):
                        half_life_years=None, num_rounds=400, train_max_rows=1_200_000,
                        label=f"fs2:{label}", feature_groups=tuple(groups))
         t = time.time()
-        store = run_probs(X, R, cfg)
+        ckpt = STORES / f"fs2_{label}.ckpt.pkl"
+        store = run_probs(X, R, cfg, checkpoint=ckpt)
         store.save(path)
+        ckpt.unlink(missing_ok=True)
         log.info("[%s] run_probs done in %.0fs", label, time.time() - t)
     del X
     gc.collect()
