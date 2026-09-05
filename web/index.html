@@ -15,7 +15,7 @@
 @media(prefers-color-scheme:dark){:root{--bg:#0F181C;--sf:#162228;--sf2:#1E2D34;--ink:#E3ECF0;--ink2:#9DB0B8;--line:#2A3A42;--acc:#6FB7CC;--acc2:#0E4F63;--buoy:#F0844E;--ok:#7CCBA3;--okbg:#16302A;--ng:#F08080;--ngbg:#3A1C1C;--warnbg:#3A2E10;--warn:#F2C766}}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
 .app{max-width:640px;margin:0 auto;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
-header{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:2px solid var(--acc)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:2px solid var(--acc)}
 header h1{margin:0;font-size:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap}header .sub{font-size:11px;color:var(--ink2);font-family:var(--mono);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modeTog{display:flex;border:1px solid var(--acc);border-radius:999px;overflow:hidden;flex:0 0 auto}.modeTog button{font:inherit;font-size:12px;border:0;background:none;color:var(--acc);padding:5px 10px;min-height:32px}.modeTog button.on{background:var(--acc);color:#fff}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--sf);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:10}
@@ -42,7 +42,7 @@ button.btn{font:inherit;border:1px solid var(--acc);background:var(--acc);color:
 input,select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--sf);color:var(--ink);width:100%}
 label{display:block;font-size:13px;color:var(--ink2);margin:8px 0}label input,label select{margin-top:2px}
 .tabs{display:flex;gap:6px;overflow-x:auto;padding:4px 0;-webkit-overflow-scrolling:touch}.tabs button{flex:0 0 auto;font:inherit;font-size:12px;border:1px solid var(--line);background:var(--sf);color:var(--ink2);padding:6px 10px;border-radius:999px;min-height:32px}.tabs button.on{background:var(--acc);color:#fff;border-color:transparent}
-.filt{position:sticky;top:52px;z-index:4;background:var(--bg);padding:4px 0 6px}
+.filt{position:sticky;top:var(--hdr,52px);z-index:4;background:var(--bg);padding:4px 0 6px;box-shadow:0 6px 8px -8px rgba(0,0,0,.25)}
 .filt .rng{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:var(--ink2)}.filt .rng input[type=range]{padding:0;height:28px}
 .judge{border-left:4px solid var(--acc);padding-left:10px}.judge.ok{border-color:var(--ok)}.judge.ng{border-color:var(--buoy)}
 details summary{cursor:pointer;color:var(--acc);font-size:13px}
@@ -87,13 +87,24 @@ async function api(path, opt) {
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
-function go(view, extra) { state.view = view; Object.assign(state, extra || {}); persist(); document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.v === view)); render(); }
+function go(view, extra, opts) {
+  if (view === "race" && state.view !== "race") { state.backView = state.view; state.backScroll = window.scrollY; if (!(opts && opts.pop)) history.pushState({ view: "race" }, ""); }
+  state.view = view; Object.assign(state, extra || {}); persist();
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.v === view));
+  render().then(() => {
+    if (view === "race") window.scrollTo(0, 0);
+    else if (state.backScroll != null && view === state.backView) { window.scrollTo(0, state.backScroll); state.backScroll = null; }
+  });
+}
+function goBack() { if (history.state && history.state.view === "race") history.back(); else go(state.backView || "races"); }
+window.addEventListener("popstate", () => { if (state.view === "race") go(state.backView || "races", null, { pop: true }); });
 function setMode(m) { state.mode = m; persist(); render(); }
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.v));
 document.querySelectorAll("#modeTog button").forEach(b => b.onclick = () => setMode(b.dataset.m));
 
 async function render() {
   document.querySelectorAll("#modeTog button").forEach(b => b.classList.toggle("on", b.dataset.m === state.mode));
+  const hdr = document.querySelector("header"); if (hdr) document.documentElement.style.setProperty("--hdr", hdr.offsetHeight + "px");
   const m = $("#main"); m.innerHTML = '<p class="muted">読み込み中…</p>';
   try {
     if (state.view === "home") await renderHome(m);
@@ -128,7 +139,9 @@ async function renderHome(m) {
   m.innerHTML = `
     <p class="muted">表示中の買い方：<b>${MODE_NAME[state.mode]}</b>${state.mode === "focused" ? "（自信上位・期待値1.0以上・最大5点、1レース最大3,000円）" : "（本線10点＋穴5点、3,000円）"}</p>
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
-    <h2>今日の勝負レース</h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
+    <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="state.f.dec='buy';go('races');return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
+    <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="state.f.stadium='${c}';state.f.dec='all';go('races')">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
+    <p class="muted">場をタップするとその場の全レース（推奨・見送りとも）を一覧で開きます。★＝推奨あり</p>
     <h2>本日の仮想収支（推奨のみ）</h2><div class="kpis">${kpi("投資", fmtN(d.stake)+"円")}${kpi("払戻", fmtN(d.payout)+"円")}${kpi("損益", fmtY(d.payout - d.stake), d.payout - d.stake >= 0 ? "pos" : "neg")}</div>
     <p class="muted">見送り含む全レース仮想：${d.virtual_hits}/${d.n} 的中、${fmtY(d.virtual_payout - d.virtual_stake)}</p>
     <h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", cum.n)}${kpi("的中率", fmtP(cum.hit_rate))}${kpi("回収率", fmtP(cum.roi), (cum.roi || 0) >= 1 ? "pos" : "")}</div>
@@ -198,7 +211,7 @@ async function renderRace(m) {
   const prog = d.predictions.find(x => x.stage === "program" && x.role === "active");
   $("#hdr").textContent = `${r.stadium} ${r.race_no}R`;
   const c = d.conditions;
-  let html = `<p><button class="btn ghost" onclick="go('races')">‹ 一覧</button></p>
+  let html = `<p><button class="btn ghost" onclick="goBack()">‹ 戻る</button></p>
     <div class="card"><b>${r.stadium} ${r.race_no}R</b> ${r.grade || ""} ${r.race_type || ""}<br><span class="muted">締切 ${r.closed_at ? r.closed_at.replace("T"," ").slice(0,16) : "–"}${c ? ` · ${c.weather || ""} 風${c.wind_dir || ""}${c.wind_speed_m ?? "–"}m 波${c.wave_cm ?? "–"}cm 水温${c.water_temp_c ?? "–"}℃` : ""}</span></div>`;
   if (r.trifecta) {
     const sc = p && p.scoring;
