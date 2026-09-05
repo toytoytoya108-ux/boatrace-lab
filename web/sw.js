@@ -2,7 +2,7 @@
    静的資産: Cache First（バージョン付き）
    API     : Network First。失敗時のみキャッシュを返し、X-From-Cache ヘッダで「古い可能性」を伝える。
    予想・オッズは常に最新をネットワークから取り、古いキャッシュを最新として見せない（docs/06 §3）。 */
-const VERSION = "bl-v1";
+const VERSION = "bl-v2";
 const STATIC = ["/", "/static/manifest.json", "/static/icon.svg"];
 
 self.addEventListener("install", (e) => {

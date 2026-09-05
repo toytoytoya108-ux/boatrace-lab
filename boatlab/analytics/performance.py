@@ -98,19 +98,40 @@ def breakdown(df: pd.DataFrame, by: str, decision: str | None = "buy") -> pd.Dat
     return pd.DataFrame(rows)
 
 
+FOCUSED_READINESS_DEFAULT = {"min_races": 500, "roi": 1.00, "roi_ci_lower": 0.95, "recent_n": 100, "recent_roi": 1.00}
+
+
 def readiness(df: pd.DataFrame, thresholds: dict) -> dict:
-    """実戦投入判定（docs 21）。自動購入はしない。警告を付ける。"""
+    """実戦投入判定（docs 21）。自動購入はしない。警告を付ける。
+
+    thresholds に含まれるキーだけを条件にする：
+      min_races / hit_rate / roi / roi_ci_lower / recent_n / recent_hit_rate / recent_roi / target_roi
+    """
     buy = df[df["decision"] == "buy"]
     b = _block(buy)
-    r100 = _block(buy.tail(int(thresholds.get("recent_n", 100))))
-    checks = [
-        {"name": "累計レース", "value": b["n"], "target": thresholds["min_races"], "ok": b["n"] >= thresholds["min_races"], "fmt": "int"},
-        {"name": "累計的中率", "value": b["hit_rate"], "target": thresholds["hit_rate"], "ok": (b["hit_rate"] or 0) >= thresholds["hit_rate"], "fmt": "pct"},
-        {"name": "累計回収率", "value": b["roi"], "target": thresholds["roi"], "ok": (b["roi"] or 0) >= thresholds["roi"], "fmt": "pct"},
-        {"name": f"直近{thresholds.get('recent_n', 100)}レース的中率", "value": r100["hit_rate"], "target": thresholds["recent_hit_rate"],
-         "ok": (r100["hit_rate"] or 0) >= thresholds["recent_hit_rate"] and r100["n"] >= thresholds.get("recent_n", 100), "fmt": "pct"},
-        {"name": "目標回収率", "value": b["roi"], "target": thresholds["target_roi"], "ok": (b["roi"] or 0) >= thresholds["target_roi"], "fmt": "pct"},
-    ]
+    rn = int(thresholds.get("recent_n", 100))
+    r100 = _block(buy.tail(rn))
+    checks = [{"name": "対象レース", "value": b["n"], "target": thresholds.get("min_races", 0),
+               "ok": b["n"] >= thresholds.get("min_races", 0), "fmt": "int"}]
+    if "hit_rate" in thresholds:
+        checks.append({"name": "累計的中率", "value": b["hit_rate"], "target": thresholds["hit_rate"],
+                       "ok": (b["hit_rate"] or 0) >= thresholds["hit_rate"], "fmt": "pct"})
+    if "roi" in thresholds:
+        checks.append({"name": "累計回収率", "value": b["roi"], "target": thresholds["roi"],
+                       "ok": (b["roi"] or 0) >= thresholds["roi"], "fmt": "pct"})
+    if "roi_ci_lower" in thresholds:
+        lo = (b["roi_ci"] or (None, None))[0]
+        checks.append({"name": "回収率の95%区間下限", "value": lo, "target": thresholds["roi_ci_lower"],
+                       "ok": lo is not None and lo >= thresholds["roi_ci_lower"], "fmt": "pct"})
+    if "recent_hit_rate" in thresholds:
+        checks.append({"name": f"直近{rn}レース的中率", "value": r100["hit_rate"], "target": thresholds["recent_hit_rate"],
+                       "ok": (r100["hit_rate"] or 0) >= thresholds["recent_hit_rate"] and r100["n"] >= rn, "fmt": "pct"})
+    if "recent_roi" in thresholds:
+        checks.append({"name": f"直近{rn}レース回収率", "value": r100["roi"], "target": thresholds["recent_roi"],
+                       "ok": (r100["roi"] or 0) >= thresholds["recent_roi"] and r100["n"] >= rn, "fmt": "pct"})
+    if "target_roi" in thresholds:
+        checks.append({"name": "目標回収率", "value": b["roi"], "target": thresholds["target_roi"],
+                       "ok": (b["roi"] or 0) >= thresholds["target_roi"], "fmt": "pct"})
     warnings = []
     if b["n"] and b["hit_rate_ci"] and b["hit_rate_ci"][0] < thresholds["hit_rate"] <= (b["hit_rate"] or 0):
         warnings.append("的中率は条件を満たしていますが、95%信頼区間の下限は条件未満です（サンプル不足の可能性）")

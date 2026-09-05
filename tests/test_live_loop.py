@@ -50,8 +50,20 @@ def test_train_predict_score(tmp_path, monkeypatch):
         assert p.flags.get("staking") == "prob"
         assert abs(sum(p.probs.values()) - 1.0) < 1e-6
         assert 0 <= p.confidence <= 1 and p.decision in ("buy", "skip")
+    # 絞り込み型（role='focused'）も同時に保存される
+    with dbmod.session_scope() as s:
+        fps = s.execute(select(Prediction).where(Prediction.model_version == "test-0.1", Prediction.role == "focused")).scalars().all()
+        assert len(fps) == out["predicted"]
+        n_buy = 0
+        for fp in fps:
+            fsel = s.execute(select(PredictionSelection).where(PredictionSelection.prediction_id == fp.id)).scalars().all()
+            assert len(fsel) <= 5 and all(100 <= x.stake <= 1000 and x.stake % 100 == 0 for x in fsel)
+            assert sum(x.stake for x in fsel) <= 3000
+            assert fp.flags.get("mode") == "focused" and fp.decision in ("buy", "skip")
+            n_buy += fp.decision == "buy"
+        assert n_buy < len(fps)  # 全部買いにはならない（絞り込み）
     sc = daily.score_pending()
-    assert sc["scored"] == out["predicted"]
+    assert sc["scored"] == out["predicted"] * 2  # 本体＋絞り込み型
     with dbmod.session_scope() as s:
         rows = s.execute(select(Scoring)).scalars().all()
         # 過去日シミュレーション → created_at > 締切 → 全件 invalid（リーク検査が働いている）

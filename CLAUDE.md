@@ -15,7 +15,8 @@
 - 本番: KAGOYA VPS で稼働（PWA + スケジューラ）。`deploy/`、手順は `docs/10`。更新は VPS で
   `sudo bash /opt/boatlab/deploy/update.sh`。
 - 採用モデル: **Model 1.0**（active）。Model 1.1（3seedアンサンブル）は shadow 並走候補で未採用。
-- 資金配分: **確率比例1乗**（`settings_versions.extra.staking`）。均等と回収率は同等だが「的中しても
+- 買い方: **絞り込み型**（role='focused'、`FocusedParams`、docs/04 §16）を15点固定と並行して毎日保存。PWA上部トグルで切替。
+- 資金配分（15点固定側）: **確率比例1乗**（`settings_versions.extra.staking`）。均等と回収率は同等だが「的中しても
   赤字」の割合が下がるため採用。`boatlab/model/staking.py`。
 - これまでの正直な結論: 現行モデルに市場優位はない（3連単 log-loss 市場3.70 vs モデル3.78）。
   控除率は実測25%。回収率100%超えの買い方は見つかっていない。詳細は `reports/backtest/`。
@@ -27,8 +28,8 @@
 - 検証: `scripts/run_fs2_experiments.py`。基準値→各グループ単独→効いたものの組合せ、を四半期WFで比較。
   1実験=1サブプロセス（6GBメモリ対策）、期ごとに `.ckpt.pkl` へチェックポイント（途中落ち再開可）。
 - 結果は `reports/backtest/fs2_experiments.{csv,md}` に追記。判定は 3連単 log-loss が基準比 −0.001 以上。
-- 現状: 基準値のみ確定（log-loss 3.8108 / 15点的中率58.3% / 回収率80.7%）。7グループはこれから。
-- 次: 効いたグループを組合せ→封印テストで1回確認→shadow並走→PWAでユーザーが採用判断。
+- 結果（run_fs2_fast.py、単一分割）: form −0.0058 / exh_trust −0.0014 が有効、form+exh_trust=3.8090（base 3.8171）。他は誤差。
+- 次: form+exh_trust で Model 1.2 を全期間WF＋ROI＋封印テストで本検証→shadow並走→PWAでユーザーが採用判断。
 
 ## データの置き場所（重要）
 - `data/`（lab.db 2.2GB、features 1.3GB、probstores 3.2GB、models）は **.gitignore でリポジトリに入らない**。

@@ -72,6 +72,13 @@ def _q(sql: str, **params) -> list[dict]:
     return out
 
 
+ROLE_OF_MODE = {"std": "active", "focused": "focused"}
+
+
+def _role(mode: str | None) -> str:
+    return ROLE_OF_MODE.get(mode or "std", "active")
+
+
 def _active_version() -> str | None:
     with session_scope() as s:
         mv = s.execute(select(ModelVersion).where(ModelVersion.status == "active")).scalars().first()
@@ -98,22 +105,26 @@ def health(_=Depends(require_auth)):
 
 
 @app.get("/api/today")
-def today(d: str | None = None, _=Depends(require_auth)):
+def today(d: str | None = None, mode: str | None = None, stadium: int | None = None, _=Depends(require_auth)):
     day = date.fromisoformat(d) if d else now_jst().date()
     mv = _active_version()
+    role = _role(mode)
     races = _q("""
         SELECT r.id, r.stadium_code, r.race_no, r.closed_at, r.grade, r.race_type, r.status,
                res.trifecta, res.trifecta_payout,
                p.id AS prediction_id, p.stage, p.confidence, p.expected_return, p.decision, p.skip_reason, p.completeness, p.flags,
+               (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,
+               (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS stake_plan,
                sc.hit, sc.hit_kind, sc.pnl, sc.roi, sc.valid, sc.stake_total, sc.payout_total, sc.category
         FROM races r
         LEFT JOIN results res ON res.race_id = r.id
         LEFT JOIN predictions p ON p.id = (
-            SELECT p2.id FROM predictions p2 WHERE p2.race_id = r.id AND p2.role='active'
+            SELECT p2.id FROM predictions p2 WHERE p2.race_id = r.id AND p2.role = :role
               AND (:mv IS NULL OR p2.model_version = :mv)
             ORDER BY CASE p2.stage WHEN 'final' THEN 0 ELSE 1 END, p2.created_at DESC LIMIT 1)
         LEFT JOIN scoring sc ON sc.prediction_id = p.id
-        WHERE r.race_date = :d ORDER BY r.closed_at, r.stadium_code, r.race_no""", d=str(day), mv=mv)
+        WHERE r.race_date = :d AND (:st IS NULL OR r.stadium_code = :st)
+        ORDER BY r.closed_at, r.stadium_code, r.race_no""", d=str(day), mv=mv, role=role, st=stadium)
     for r in races:
         r["stadium"] = STADIUMS.get(r["stadium_code"])
     buys = [r for r in races if r["decision"] == "buy"]
@@ -123,7 +134,7 @@ def today(d: str | None = None, _=Depends(require_auth)):
                "hits": sum(1 for r in scored if r["decision"] == "buy" and r["hit"]),
                "virtual_stake": sum(r["stake_total"] or 0 for r in scored), "virtual_payout": sum(r["payout_total"] or 0 for r in scored),
                "virtual_hits": sum(1 for r in scored if r["hit"])}
-    return {"date": str(day), "active_model": mv, "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"]),
+    return {"date": str(day), "mode": mode or "std", "active_model": mv, "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"]),
             "n_buy": len(buys), "n_skip": sum(1 for r in races if r["decision"] == "skip"), "day": day_pnl,
             "top": sorted(buys, key=lambda r: -(r["confidence"] or 0) * (r["expected_return"] or 0))[:5], "races": races}
 
@@ -153,17 +164,24 @@ def race_detail(race_id: int, _=Depends(require_auth)):
             "conditions": cond[0] if cond else None, "result_entries": result_entries, "predictions": preds, "odds": odds}
 
 
+def _scored(model, mode, stadium=None):
+    df = perf.load_scored(model, role=_role(mode))
+    if stadium and len(df):
+        df = df[df["stadium_code"] == int(stadium)]
+    return df
+
+
 @app.get("/api/stats")
-def stats(range: str = "all", model: str | None = None, _=Depends(require_auth)):
-    df = perf.load_scored(model)
+def stats(range: str = "all", model: str | None = None, mode: str | None = None, stadium: int | None = None, _=Depends(require_auth)):
+    df = _scored(model, mode, stadium)
     today_ = now_jst().date()
     since = {"d": today_, "w": today_ - timedelta(days=7), "m": today_.replace(day=1), "all": None}.get(range)
     return perf.summary(df, since=since)
 
 
 @app.get("/api/stats/breakdown")
-def stats_breakdown(by: str = "stadium", decision: str | None = "buy", model: str | None = None, _=Depends(require_auth)):
-    df = perf.load_scored(model)
+def stats_breakdown(by: str = "stadium", decision: str | None = "buy", model: str | None = None, mode: str | None = None, stadium: int | None = None, _=Depends(require_auth)):
+    df = _scored(model, mode, stadium)
     if by not in ("stadium", "grade", "month", "odds_band", "confidence_band", "kind", "model_version"):
         raise HTTPException(400, "bad 'by'")
     out = perf.breakdown(df, by, None if decision in (None, "all") else decision)
@@ -171,25 +189,36 @@ def stats_breakdown(by: str = "stadium", decision: str | None = "buy", model: st
 
 
 @app.get("/api/stats/calibration")
-def stats_calibration(model: str | None = None, _=Depends(require_auth)):
-    df = perf.load_scored(model)
+def stats_calibration(model: str | None = None, mode: str | None = None, _=Depends(require_auth)):
+    df = _scored(model, mode)
     t = perf.calibration_check(df)
     t["band"] = t["band"].astype(str)
     return json.loads(t.to_json(orient="records"))
 
 
 @app.get("/api/stats/misses")
-def stats_misses(model: str | None = None, _=Depends(require_auth)):
-    return perf.miss_analysis(perf.load_scored(model))
+def stats_misses(model: str | None = None, mode: str | None = None, _=Depends(require_auth)):
+    return perf.miss_analysis(_scored(model, mode))
 
 
 @app.get("/api/readiness")
-def readiness(_=Depends(require_auth)):
+def readiness(mode: str | None = None, _=Depends(require_auth)):
     st = _settings()
-    df = perf.load_scored()
-    out = perf.readiness(df, st["readiness"])
+    df = _scored(None, mode)
+    if (mode or "std") == "focused":
+        th = {**perf.FOCUSED_READINESS_DEFAULT, **((st.get("extra") or {}).get("readiness_focused") or {})}
+    else:
+        th = st["readiness"]
+    out = perf.readiness(df, th)
+    out["mode"] = mode or "std"
+    out["thresholds"] = th
     out["by_model"] = json.loads(perf.breakdown(df, "model_version").to_json(orient="records")) if len(df) else []
     return out
+
+
+@app.get("/api/stadiums")
+def stadiums(_=Depends(require_auth)):
+    return [{"code": k, "name": v} for k, v in sorted(STADIUMS.items())]
 
 
 @app.get("/api/models")

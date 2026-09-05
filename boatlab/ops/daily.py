@@ -23,7 +23,8 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
-from boatlab.model.selection import SelectionParams
+from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
+from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
 from boatlab.model.trifecta import PERM_LABELS, combo_index
 from boatlab.store.db import session_scope
@@ -78,6 +79,11 @@ def _settings_id(s) -> int:
     return _settings_row(s).id
 
 
+def focused_from_settings(row: SettingsVersion) -> FocusedParams:
+    """設定の extra.focused（絞り込み型）。無ければ既定値（検証済みの値）。"""
+    return FocusedParams.from_dict((row.extra or {}).get("focused"))
+
+
 def staking_from_settings(row: SettingsVersion) -> StakingParams:
     """設定の extra.staking（無ければ均等 stake_per_point×points）。合計は points×stake_per_point に固定。"""
     d = dict((row.extra or {}).get("staking") or {})
@@ -102,6 +108,11 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
         srow = _settings_row(s)
         settings_id = srow.id
         staking = staking_from_settings(srow)
+        focused = focused_from_settings(srow)
+        # 絞り込み型は本体（role）と独立に保存する（role='focused'、確定予想のみ）
+        focused_role = f"{role}_focused" if role != "active" else "focused"
+        done_f = {rid for (rid,) in s.execute(select(Prediction.race_id).where(
+            Prediction.model_version == predictor.version, Prediction.stage == stage, Prediction.role == focused_role))}
     targets = []
     for r in races:
         if r.id in done or r.closed_at is None:
@@ -158,6 +169,32 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
                                           stake=sel["stake"], prob=sel["prob"], odds_at_pred=sel["odds"],
                                           odds_source=o["odds_source"], ev=sel["ev"]))
             n += 1
+            # ---- 絞り込み型（同じ確率・オッズから別の買い目を作り、role='focused' として追記）
+            if focused.enabled and stage == "final" and o["race_id"] not in done_f:
+                parr = np.array([o["probs"][k] for k in _PL], dtype=float)
+                oarr = np.array([np.nan if o["odds_used"][k] is None else float(o["odds_used"][k]) for k in _PL])
+                f = select_focused(parr, oarr, focused, completeness=float(o["completeness"]),
+                                   odds_estimated=bool(o["flags"].get("odds_estimated")))
+                pf = Prediction(
+                    race_id=o["race_id"], model_version=predictor.version, settings_id=settings_id, stage=stage, role=focused_role,
+                    created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at,
+                    features_used=None, odds_snapshot_id=odds_by_race.get(o["race_id"], (None,))[0],
+                    completeness=o["completeness"], missing_fields=None,
+                    flags={**o["flags"], "mode": "focused", "S15": round(f.S15, 4), "n_points": len(f.points),
+                           "stake_total": int(sum(f.stakes))},
+                    boat_eval=o["boat_eval"], probs=o["probs"], odds_used=o["odds_used"], ev=o["ev"],
+                    confidence=o["confidence"], expected_return=f.expected_return, decision=f.decision,
+                    skip_reason=f.skip_reason, rationale=o["rationale"],
+                    rationale_text=(o["rationale"]["summary"] + f"（絞り込み型: {len(f.points)}点・{int(sum(f.stakes))}円）"),
+                    input_hash=o["input_hash"],
+                )
+                s.add(pf)
+                s.flush()
+                for rnk, (j, stk) in enumerate(zip(f.points, f.stakes)):
+                    s.add(PredictionSelection(prediction_id=pf.id, combo=_PL[j], rank=rnk + 1, kind="main",
+                                              stake=int(stk), prob=float(parr[j]),
+                                              odds_at_pred=(None if not np.isfinite(oarr[j]) else float(oarr[j])),
+                                              odds_source=o["odds_source"], ev=float(f.ev[j])))
     return {"predicted": n, "stage": stage, "date": str(d)}
 
 

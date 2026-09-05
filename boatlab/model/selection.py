@@ -111,6 +111,77 @@ def select_points(p: np.ndarray, odds: np.ndarray, prm: SelectionParams, absent:
     return RaceSelection(main, hole, p_hat, ev, er, S, relaxed, relaxed_to)
 
 
+# ---------------------------------------------------------------- 絞り込み型（focused）
+@dataclass
+class FocusedParams:
+    """絞り込み型の買い方（docs/04 §16、2026-09-05 採用）。
+
+    1) レース選定: S15（上位15点の確率和）≥ s15_min（検証期間の上位20%≈0.73）
+    2) 買い目: 上位 pool 点のうち EV=p×odds ≥ ev_min かつ odds∈[odds_lo, odds_hi] を確率順に最大 max_points
+    3) 配分: 予算 budget、1点上限 cap、確率比例（power）、100円単位
+    """
+    enabled: bool = True
+    s15_min: float = 0.73
+    pool: int = 15
+    ev_min: float = 1.0
+    beta: float = 0.0             # EV に使う確率の市場側縮約（0=モデル確率そのまま。検証はこの設定）
+    odds_lo: float = 5.0
+    odds_hi: float = 50.0
+    max_points: int = 5
+    budget: int = 3000
+    cap: int = 1000
+    power: float = 1.0
+    completeness_min: float = 0.6
+    require_real_odds: bool = False
+
+    @staticmethod
+    def from_dict(d: dict | None) -> "FocusedParams":
+        d = d or {}
+        return FocusedParams(**{k: v for k, v in d.items() if k in FocusedParams().__dict__})
+
+
+@dataclass
+class FocusedSelection:
+    points: list[int]             # 120通りの index（確率順）
+    stakes: list[int]             # 点ごとの賭け金
+    ev: np.ndarray
+    S15: float
+    decision: str                 # buy / skip
+    skip_reason: str | None
+    expected_return: float        # 賭け金加重の EV
+
+
+def select_focused(p: np.ndarray, odds: np.ndarray, prm: FocusedParams, completeness: float = 1.0,
+                   odds_estimated: bool = False) -> FocusedSelection:
+    from boatlab.model.staking import StakingParams, allocate
+    p = np.asarray(p, float)
+    odds = np.asarray(odds, float)
+    q = implied_q(odds)
+    p_hat = (1 - prm.beta) * p + prm.beta * q
+    ev = p_hat * np.where(np.isfinite(odds), odds, 0.0)
+    order = np.argsort(-p)
+    S15 = float(p[order[:15]].sum())
+    pool = [int(i) for i in order[: prm.pool]]
+    cand = [i for i in pool if ev[i] >= prm.ev_min and np.isfinite(odds[i]) and prm.odds_lo <= odds[i] <= prm.odds_hi][: prm.max_points]
+    reason = None
+    if completeness < prm.completeness_min:
+        reason = "incomplete"
+    elif prm.require_real_odds and odds_estimated:
+        reason = "odds_estimated"
+    elif S15 < prm.s15_min:
+        reason = "confidence"
+    elif not cand:
+        reason = "no_value_points"
+    if not cand:
+        return FocusedSelection([], [], ev, S15, "skip", reason or "no_value_points", 0.0)
+    # 見送りでも候補点は保存して仮想採点する（ゲートの妥当性を後から検証できる）
+    budget = int(min(prm.budget, prm.cap * len(cand)))
+    stakes = allocate(cand, cand, p, odds, StakingParams(method="prob", total=budget, prob_power=prm.power,
+                                                          max_share=min(1.0, prm.cap / budget)))
+    er = float(np.average(ev[cand], weights=stakes))
+    return FocusedSelection(cand, [int(x) for x in stakes], ev, S15, "skip" if reason else "buy", reason, er)
+
+
 def decide(confidence: float, expected_return: float, completeness: float, flags: dict, prm: SelectionParams) -> tuple[str, str | None]:
     if completeness < prm.completeness_min:
         return "skip", "incomplete"
