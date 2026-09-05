@@ -133,7 +133,7 @@ def readiness(df: pd.DataFrame, thresholds: dict) -> dict:
         checks.append({"name": "目標回収率", "value": b["roi"], "target": thresholds["target_roi"],
                        "ok": (b["roi"] or 0) >= thresholds["target_roi"], "fmt": "pct"})
     warnings = []
-    if b["n"] and b["hit_rate_ci"] and b["hit_rate_ci"][0] < thresholds["hit_rate"] <= (b["hit_rate"] or 0):
+    if b["n"] and "hit_rate" in thresholds and b["hit_rate_ci"] and b["hit_rate_ci"][0] < thresholds["hit_rate"] <= (b["hit_rate"] or 0):
         warnings.append("的中率は条件を満たしていますが、95%信頼区間の下限は条件未満です（サンプル不足の可能性）")
     if b["n"] and b["roi_ci"] and b["roi_ci"][0] < 1.0 <= (b["roi"] or 0):
         warnings.append("回収率100%超は統計的に有意ではありません（区間下限が100%未満）")
