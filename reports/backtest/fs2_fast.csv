@@ -1,0 +1,11 @@
+label,groups,n,logloss,top15_hit,secs
+base,(base),83214,3.8171,0.6182,149
+entry,entry,83214,3.8166,0.6189,163
+st,st,83214,3.8173,0.6177,157
+kimarite,kimarite,83214,3.8162,0.6193,157
+weather,weather,83214,3.8166,0.6186,156
+form,form,83214,3.8113,0.6199,149
+exh_trust,exh_trust,83214,3.8157,0.6185,152
+parts,parts,83214,3.8171,0.6182,153
+combo_fe,form+exh_trust,83214,3.809,0.6191,169
+combo_fek,form+exh_trust+kimarite,83214,3.8092,0.6208,183
