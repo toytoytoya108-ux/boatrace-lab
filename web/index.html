@@ -74,6 +74,8 @@ const hhmm = s => s ? s.slice(11,16) : "";
 let saved = {}; try { saved = JSON.parse(localStorage.getItem("bl_state") || "{}"); } catch (e) {}
 const state = Object.assign({ view: "home", raceId: null, day: null, mode: "focused", statsBy: "month", statsStadium: "", statsRange: "all",
   f: { stadium: "", dec: "buy", res: "", cmin: 0, evmin: 0, sort: "time" } }, saved);
+const F_DEFAULT = { stadium: "", dec: "buy", res: "", cmin: 0, evmin: 0, sort: "time" };
+function resetF(partial) { state.f = Object.assign({}, F_DEFAULT, partial || {}); persist(); }
 function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, statsBy: state.statsBy })); } catch (e) {} }
 const REASON = { confidence: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得", low_agreement: "モデル不一致", no_value_points: "妙味のある買い目なし", odds_estimated: "実オッズ未取得" };
 const MODE_ROLE = { std: "active", focused: "focused" };
@@ -139,8 +141,8 @@ async function renderHome(m) {
   m.innerHTML = `
     <p class="muted">表示中の買い方：<b>${MODE_NAME[state.mode]}</b>${state.mode === "focused" ? "（自信上位・期待値1.0以上・最大5点、1レース最大3,000円）" : "（本線10点＋穴5点、3,000円）"}</p>
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
-    <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="state.f.dec='buy';go('races');return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
-    <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="state.f.stadium='${c}';state.f.dec='all';go('races')">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
+    <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races');return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
+    <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="resetF({stadium:'${c}',dec:'all'});go('races')">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
     <p class="muted">場をタップするとその場の全レース（推奨・見送りとも）を一覧で開きます。★＝推奨あり</p>
     <h2>本日の仮想収支（推奨のみ）</h2><div class="kpis">${kpi("投資", fmtN(d.stake)+"円")}${kpi("払戻", fmtN(d.payout)+"円")}${kpi("損益", fmtY(d.payout - d.stake), d.payout - d.stake >= 0 ? "pos" : "neg")}</div>
     <p class="muted">見送り含む全レース仮想：${d.virtual_hits}/${d.n} 的中、${fmtY(d.virtual_payout - d.virtual_stake)}</p>
@@ -177,8 +179,17 @@ async function renderRaces(m) {
       <span style="width:8px"></span>${[["time", "締切順"], ["conf", "信頼度順"], ["ev", "期待値順"], ["pnl", "損益順"]].map(([k, l]) => `<button class="${f.sort === k ? "on" : ""}" onclick="setF('sort','${k}')">${l}</button>`).join("")}</div>
     <div class="rng"><div>信頼度 ≥ <b class="mono">${fmtP(f.cmin)}</b><input type="range" min="0" max="0.9" step="0.05" value="${f.cmin}" onchange="setF('cmin',+this.value)"></div>
       <div>期待値 ≥ <b class="mono">${f.evmin.toFixed(2)}</b><input type="range" min="0" max="1.5" step="0.05" value="${f.evmin}" onchange="setF('evmin',+this.value)"></div></div></div>
-    <p class="muted">${list.length}レース${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}</p>
-    <div class="card">${list.length ? list.map(raceRow).join("") : '<p class="muted">該当なし</p>'}</div>`;
+    <p class="muted">${list.length}レース（全${t.races.length}レース中）${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}${JSON.stringify(f) !== JSON.stringify(Object.assign({}, F_DEFAULT, {dec: f.dec})) ? ` · <a href="#" onclick="resetF({dec:'${f.dec}'});go('races');return false">絞り込みを解除</a>` : ""}</p>
+    <div class="card">${list.length ? list.map(raceRow).join("") : emptyRaces(t, f)}</div>`;
+}
+function emptyRaces(t, f) {
+  const nBuy = t.races.filter(r => r.decision === "buy").length, nPred = t.races.filter(r => r.prediction_id).length;
+  let why;
+  if (f.dec === "buy" && nBuy === 0) why = state.mode === "focused"
+    ? `今日はまだ推奨レースがありません（絞り込み型は自信上位20%のレースだけを、締切4〜10分前の確定予想で選びます。予想済み ${nPred}/${t.races.length}R）。`
+    : `今日はまだ推奨レースがありません（予想済み ${nPred}/${t.races.length}R。購入候補条件を満たすレースは少なめです）。`;
+  else why = `条件に合うレースがありません（推奨 ${nBuy}R / 予想済み ${nPred}R / 全 ${t.races.length}R）。`;
+  return `<p class="muted">${why}</p><p><button class="btn ghost" onclick="resetF({dec:'all'});go('races')">全レースを見る</button></p>`;
 }
 // ---------------- レース詳細（フォーメーション表示）
 function formationView(sels, won) {
