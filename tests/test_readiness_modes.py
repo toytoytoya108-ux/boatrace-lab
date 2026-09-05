@@ -10,7 +10,7 @@ def _df(n=30):
                          payout_total=9000 if i % 3 == 0 else 0, pnl=6000 if i % 3 == 0 else -3000, confidence=0.7,
                          expected_return=1.05, stadium="多摩川" if i % 2 else "戸田", stadium_code=5 if i % 2 else 2,
                          flags={}, race_date=pd.Timestamp("2026-09-01") + pd.Timedelta(days=i), race_id=i, model_version="1.0",
-                         grade=None, race_no=1, hole_stake=0, main_stake=3000))
+                         grade=None, race_no=1, hole_stake=0, main_stake=3000, avg_odds=25.0, hole_avg_odds=None, category="buy_hit" if i % 3 == 0 else "buy_miss", valid=True, created_at=None))
     return pd.DataFrame(rows)
 
 
@@ -28,7 +28,7 @@ def test_std_thresholds_still_work():
 
 
 def test_empty_df_both_modes():
-    empty = _df(0)
+    empty = _df(3).iloc[0:0]
     for th in (perf.FOCUSED_READINESS_DEFAULT, {"min_races": 10, "hit_rate": 0.3, "roi": 1.0, "recent_n": 10, "recent_hit_rate": 0.3, "target_roi": 1.1}):
         out = perf.readiness(empty, th)
         assert out["passed"] is False
