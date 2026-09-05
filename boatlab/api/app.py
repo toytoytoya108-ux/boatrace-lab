@@ -216,6 +216,19 @@ def readiness(mode: str | None = None, _=Depends(require_auth)):
     return out
 
 
+@app.get("/api/export.csv")
+def export_csv(mode: str | None = None, _=Depends(require_auth)):
+    """採点済み予想の一覧を CSV で書き出す（分析用。スマホの「ファイル」に保存してチャットに添付できる）。"""
+    from fastapi.responses import Response
+    df = perf.load_scored(None, role=_role(mode))
+    if len(df):
+        df = df.drop(columns=[c for c in ("flags",) if c in df.columns])
+    body = df.to_csv(index=False)
+    fn = f"boatlab_{mode or 'std'}_{now_jst():%Y%m%d}.csv"
+    return Response(content=body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+
 @app.get("/api/stadiums")
 def stadiums(_=Depends(require_auth)):
     return [{"code": k, "name": v} for k, v in sorted(STADIUMS.items())]

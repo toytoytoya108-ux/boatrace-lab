@@ -302,7 +302,9 @@ async function renderSettings(m) {
       <label>方式<select id="stk_method">${[["uniform","均等（200円×15点）"],["prob","確率比例（本線上位に厚く）"],["payout_equal","払戻均等（オッズ反比例）"],["group","本線/穴で単価を変える"]].map(([k,v]) => `<option value="${k}" ${stk.method === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <div class="two">${num("stk_power", "確率比例の指数", stk.prob_power ?? 1, 0.5)}${num("stk_max", "1点の上限（割合）", stk.max_share ?? 0.3, 0.05)}</div>
       <div class="two">${num("stk_main", "本線1点（group）", stk.main_stake ?? 100, 100)}${num("stk_hole", "穴1点（group）", stk.hole_stake ?? 400, 100)}</div></div>
-    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">変更は設定版として記録され、過去の予想には影響しません。</p>`;
+    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">変更は設定版として記録され、過去の予想には影響しません。</p>
+    <h2>データの書き出し</h2><div class="card"><p class="muted">採点済みの予想をCSVで保存します。分析を依頼するときはこのファイルをチャットに添付してください。</p>
+      <p><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=focused" download>絞り込み型のCSV</a> <a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=std" download>15点固定のCSV</a></p></div>`;
   $("#save").onclick = async () => {
     const g = id => +$("#" + id).value;
     const staking = { method: $("#stk_method").value, prob_power: g("stk_power"), max_share: g("stk_max"), main_stake: g("stk_main"), hole_stake: g("stk_hole"), min_per_point: 100, unit: 100 };
