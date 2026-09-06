@@ -2,7 +2,7 @@
    静的資産: Cache First（バージョン付き）
    API     : Network First。失敗時のみキャッシュを返し、X-From-Cache ヘッダで「古い可能性」を伝える。
    予想・オッズは常に最新をネットワークから取り、古いキャッシュを最新として見せない（docs/06 §3）。 */
-const VERSION = "bl-v4";
+const VERSION = "bl-v5";
 const STATIC = ["/", "/static/manifest.json", "/static/icon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -26,6 +26,17 @@ self.addEventListener("fetch", (e) => {
         const h = new Headers(cached.headers); h.set("X-From-Cache", "1");
         return new Response(await cached.blob(), { status: cached.status, headers: h });
       })
+    );
+    return;
+  }
+  // 画面本体（"/"）は Network First：更新後すぐ新しい画面が出るように。オフライン時のみキャッシュ
+  if (url.pathname === "/" || e.request.mode === "navigate") {
+    e.respondWith(
+      fetch(e.request).then((res) => {
+        const copy = res.clone();
+        caches.open(VERSION).then((c) => c.put("/", copy));
+        return res;
+      }).catch(() => caches.match("/"))
     );
     return;
   }
