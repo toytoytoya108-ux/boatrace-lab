@@ -33,6 +33,9 @@
   valid log-loss 3.8108→3.8039、封印テスト 3.7983→3.7894。精度は一貫して改善、回収率は横ばい
   （15点 78.9→79.1%、絞り込み型 81.4→80.9%）。**未採用・未並走**（ユーザー判断: 別の改善を先に）。
   probstore は `data/probstores/m12_{valid,test}.pkl`（サンドボックスのみ）。
+- 市場一致フィルタ検証（`scripts/run_market_filter.py`、`reports/backtest/market_filter_test_lgb.md`、2026実オッズ）:
+  P/Q上限・β縮約・1位一致ゲートは再現せず不採用。安定して効いたのは上限オッズ50→20倍と期待値1.0→0.8
+  （的中13%→23%、回収率83%で同等）。設定タブで変更可能（コード変更不要）。実オッズ期間の現行設定は的中≈13%・回収率77〜82%。
 
 ## データの置き場所（重要）
 - `data/`（lab.db 2.2GB、features 1.3GB、probstores 3.2GB、models）は **.gitignore でリポジトリに入らない**。
