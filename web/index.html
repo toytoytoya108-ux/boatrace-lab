@@ -135,11 +135,12 @@ function raceRow(r) {
     <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">EV ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div><div class="muted">${planText(r)}</div></div><div class="right">${dec}<br>${res}</div></div>`;
 }
 async function renderHome(m) {
-  const [t, s, rd, h] = await Promise.all([api("/api/today?" + mq()), api("/api/stats?" + mq()), api("/api/readiness?" + mq()), api("/api/health")]);
+  const [t, s, rd, h, st] = await Promise.all([api("/api/today?" + mq()), api("/api/stats?" + mq()), api("/api/readiness?" + mq()), api("/api/health"), api("/api/settings")]);
+  const fc = Object.assign({ s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, budget: 3000 }, (st.extra || {}).focused || {});
   $("#hdr").textContent = t.date + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
   const d = t.day, cum = s.buy, r100 = s.recent100_buy;
   m.innerHTML = `
-    <p class="muted">表示中の買い方：<b>${MODE_NAME[state.mode]}</b>${state.mode === "focused" ? "（自信上位・期待値1.0以上・最大5点、1レース最大3,000円）" : "（本線10点＋穴5点、3,000円）"}</p>
+    <p class="muted">表示中の買い方：<b>${MODE_NAME[state.mode]}</b>${state.mode === "focused" ? `（自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点、1レース最大${fmtN(fc.budget)}円）` : "（本線10点＋穴5点、3,000円）"}</p>
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
     <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races');return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
     <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="resetF({stadium:'${c}',dec:'all'});go('races')">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
