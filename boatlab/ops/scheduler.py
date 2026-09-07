@@ -97,17 +97,25 @@ class Scheduler:
 
     def _job(self, name: str, fn):
         started = now_jst()
+        # 開始時点で記録を残す（途中で固まる・コンテナが落ちる場合も「開始したまま未完了」が画面で分かる）
+        with session_scope() as s:
+            jr = JobRun(job=name, started_at=started, ok=None)
+            s.add(jr)
+            s.flush()
+            jid = jr.id
         try:
             out = fn()
             with session_scope() as s:
-                s.add(JobRun(job=name, started_at=started, finished_at=now_jst(), ok=True,
-                             summary=out if isinstance(out, dict) else {"result": str(out)[:200]}))
+                jr = s.get(JobRun, jid)
+                jr.finished_at = now_jst(); jr.ok = True
+                jr.summary = out if isinstance(out, dict) else {"result": str(out)[:200]}
             if out:
                 log.info("%s: %s", name, out)
         except Exception as e:
             log.error("%s failed: %s\n%s", name, e, traceback.format_exc(limit=4))
             with session_scope() as s:
-                s.add(JobRun(job=name, started_at=started, finished_at=now_jst(), ok=False, error=repr(e)[:500]))
+                jr = s.get(JobRun, jid)
+                jr.finished_at = now_jst(); jr.ok = False; jr.error = repr(e)[:500]
 
     # ---------------- jobs
     def job_morning(self):

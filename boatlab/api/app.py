@@ -6,7 +6,7 @@ import hmac
 import json
 import os
 import time
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -104,6 +104,26 @@ def health(_=Depends(require_auth)):
     return {"now": now_jst().isoformat(), "active_model": _active_version(), "jobs": jobs, "fetch_failures_7d": fails}
 
 
+def _freshness(day) -> dict:
+    """画面用の更新時刻: 最終取込（morning/intraday の完了）・最終予想保存・進行中ジョブ・停滞判定。"""
+    last_ok = _q("SELECT job, finished_at FROM job_run WHERE job IN ('morning','intraday') AND ok=1 ORDER BY id DESC LIMIT 1")
+    running = _q("SELECT job, started_at FROM job_run WHERE finished_at IS NULL AND ok IS NULL ORDER BY id DESC LIMIT 1")
+    last_pred = _q("SELECT MAX(p.created_at) AS t FROM predictions p JOIN races r ON r.id=p.race_id WHERE r.race_date=:d", d=str(day))
+    now = now_jst()
+    ingest_at = last_ok[0]["finished_at"] if last_ok else None
+    hm = now.strftime("%H:%M")
+    racing = "07:55" <= hm <= "21:50"
+    stale_min = None
+    if ingest_at:
+        try:
+            stale_min = int((now.replace(tzinfo=None) - datetime.fromisoformat(str(ingest_at))).total_seconds() // 60)
+        except Exception:
+            stale_min = None
+    return {"now": now.isoformat(timespec="minutes"), "ingest_at": ingest_at, "predict_at": last_pred[0]["t"] if last_pred else None,
+            "running": running[0] if running else None, "racing_hours": racing,
+            "stale": bool(racing and day == now.date() and (stale_min is None or stale_min > 15)), "stale_min": stale_min}
+
+
 @app.get("/api/today")
 def today(d: str | None = None, mode: str | None = None, stadium: int | None = None, _=Depends(require_auth)):
     day = date.fromisoformat(d) if d else now_jst().date()
@@ -142,7 +162,7 @@ def today(d: str | None = None, mode: str | None = None, stadium: int | None = N
                "hits": sum(1 for r in scored if r["decision"] == "buy" and r["hit"]),
                "virtual_stake": sum(r["stake_total"] or 0 for r in scored), "virtual_payout": sum(r["payout_total"] or 0 for r in scored),
                "virtual_hits": sum(1 for r in scored if r["hit"])}
-    return {"date": str(day), "mode": mode or "std", "active_model": mv, "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"] and not r["provisional"]), "n_provisional": sum(1 for r in races if r["provisional"]),
+    return {"date": str(day), "mode": mode or "std", "active_model": mv, "updated": _freshness(day), "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"] and not r["provisional"]), "n_provisional": sum(1 for r in races if r["provisional"]),
             "n_buy": len(buys), "n_skip": sum(1 for r in races if r["decision"] == "skip"), "day": day_pnl,
             "top": sorted(buys, key=lambda r: -(r["confidence"] or 0) * (r["expected_return"] or 0))[:5], "races": races}
 

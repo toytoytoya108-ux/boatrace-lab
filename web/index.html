@@ -51,6 +51,7 @@ label{display:block;font-size:13px;color:var(--ink2);margin:8px 0}label input,la
 .judge{border-left:4px solid var(--acc);padding-left:10px}.judge.ok{border-color:var(--ok)}.judge.ng{border-color:var(--buoy)}
 details summary{cursor:pointer;color:var(--acc);font-size:13px}
 details.sec{margin:10px 0}details.sec>summary{font-size:15px;font-weight:700;color:var(--ink);padding:10px 12px;background:var(--sf);border:1px solid var(--line);border-radius:10px;list-style:none;display:flex;justify-content:space-between;align-items:center}details.sec>summary::-webkit-details-marker{display:none}details.sec>summary::after{content:"＋";color:var(--ink2);font-weight:400}details.sec[open]>summary::after{content:"－"}details.sec[open]>summary{border-radius:10px 10px 0 0}details.sec>.card{margin-top:0;border-top:0;border-radius:0 0 10px 10px}
+.fresh{font-size:12px;color:var(--ink2);margin:6px 0 2px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}.fresh.warn{background:var(--warnbg);color:var(--warn);padding:6px 10px;border-radius:8px}
 .offline{background:var(--warnbg);color:var(--warn);font-size:12px;padding:6px 10px;border-radius:8px;margin:8px 0;display:none}
 .login{max-width:320px;margin:80px auto;text-align:center}
 pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;border-radius:8px;overflow-x:auto}
@@ -130,6 +131,13 @@ function renderLogin() {
   $("#main").innerHTML = `<div class="login card"><h2>ログイン</h2><input id="pw" type="password" placeholder="パスワード" autocomplete="current-password"><p><button class="btn" id="lg">ログイン</button></p></div>`;
   $("#lg").onclick = async () => { const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) }); if (r.ok) render(); else alert("パスワードが違います"); };
 }
+const tm = s => s ? String(s).replace("T"," ").slice(5,16).replace("-","/") : "–";
+function freshLine(u) {
+  if (!u) return "";
+  const run = u.running ? `<span class="pill warn">実行中: ${u.running.job} ${tm(u.running.started_at).slice(6)}〜</span>` : "";
+  const warn = u.stale ? `<b>⚠ 更新が止まっています</b>（最終取込 ${tm(u.ingest_at)}${u.stale_min != null ? `、${u.stale_min}分前` : ""}）` : `最終取込 <b>${tm(u.ingest_at)}</b>`;
+  return `<div class="fresh ${u.stale ? "warn" : ""}"><span>${warn}</span><span>最終予想保存 <b>${tm(u.predict_at)}</b></span>${run}<span class="muted">表示 ${tm(u.now).slice(6)}</span></div>`;
+}
 function kpi(label, val, cls="") { return `<div class="kpi"><b class="${cls}">${val}</b><span>${label}</span></div>`; }
 function planText(r) {
   if (!r.prediction_id) return "";
@@ -148,9 +156,9 @@ function raceRow(r, compact) {
 async function renderHome(m) {
   const [t, s, rd, h, st] = await Promise.all([api("/api/today?" + mq()), api("/api/stats?" + mq()), api("/api/readiness?" + mq()), api("/api/health"), api("/api/settings")]);
   const fc = Object.assign({ s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, budget: 3000 }, (st.extra || {}).focused || {});
-  $("#hdr").textContent = t.date + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
+  $("#hdr").textContent = t.date + (t.updated && t.updated.ingest_at ? " · 更新 " + tm(t.updated.ingest_at).slice(6) : "") + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
   const d = t.day, cum = s.buy, r100 = s.recent100_buy;
-  m.innerHTML = `${modeBar()}
+  m.innerHTML = `${modeBar()}${freshLine(t.updated)}
     <p class="muted">${state.mode === "focused" ? `いまの条件：自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点・1レース最大${fmtN(fc.budget)}円` : "条件：本線10点＋穴5点、1レース3,000円（購入候補＝信頼度と期待回収率が基準以上）"}</p>
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
     <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races',{rv:'list'});return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
@@ -162,7 +170,7 @@ async function renderHome(m) {
     <h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", cum.n)}${kpi("的中率", fmtP(cum.hit_rate))}${kpi("回収率", fmtP(cum.roi), (cum.roi || 0) >= 1 ? "pos" : "")}</div>
     <div class="kpis" style="margin-top:8px">${kpi("直近100 的中率", fmtP(r100.hit_rate))}${kpi("直近100 回収率", fmtP(r100.roi))}${kpi("累計損益", fmtY(cum.pnl), cum.pnl >= 0 ? "pos" : "neg")}</div>
     <h2>実戦投入判定（${MODE_NAME[state.mode]}）</h2>${readinessCard(rd)}
-    <h2>システム状態</h2><div class="card muted">採用モデル: ${h.active_model || "なし"}<br>直近ジョブ: ${h.jobs.slice(0,3).map(j => `${j.job.split(":")[0]} ${j.ok ? "✓" : (j.ok === false ? "✗" : "…")}`).join(" / ") || "なし"}<br>取得失敗(7日): ${h.fetch_failures_7d.map(f => f.source + " " + f.n).join(", ") || "0"}</div>`;
+    <h2>システム状態</h2><div class="card muted">採用モデル: ${h.active_model || "なし"}<br>直近ジョブ: ${h.jobs.slice(0,4).map(j => `${j.job.split(":")[0]} ${tm(j.started_at).slice(6)} ${j.ok ? "✓" : (j.ok === false ? "✗" : "実行中/未完了")}`).join(" / ") || "なし"}<br>取得失敗(7日): ${h.fetch_failures_7d.map(f => f.source + " " + f.n).join(", ") || "0"}</div>`;
 }
 function readinessCard(rd) {
   const rows = rd.checks.map(c => `<tr><td>${c.name}</td><td class="n">${c.fmt === "pct" ? fmtP(c.value) : fmtN(c.value)}</td><td class="n">${c.fmt === "pct" ? fmtP(c.target) : fmtN(c.target)}</td><td>${c.ok ? "✅" : "—"}</td></tr>`).join("");
@@ -190,7 +198,7 @@ function stadiumCard(s) {
 }
 async function renderRaces(m) {
   const t = await api("/api/today?" + mq() + (state.day ? "&d=" + state.day : ""));
-  $("#hdr").textContent = t.date;
+  $("#hdr").textContent = t.date + (t.updated && t.updated.ingest_at ? " · 更新 " + tm(t.updated.ingest_at).slice(6) : "");
   const f = state.f;
   const stadiums = [...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]);
   const datePick = `<input type="date" value="${t.date}" style="width:auto;padding:4px 8px;min-height:32px" onchange="go('races',{day:this.value})">`;
@@ -198,7 +206,7 @@ async function renderRaces(m) {
     const ss = stadiumSummary(t.races), d = t.day;
     const nBuy = t.races.filter(r => r.decision === "buy").length, scored = t.races.filter(r => r.decision === "buy" && r.valid);
     const pnl = d.payout - d.stake;
-    m.innerHTML = `${modeBar()}<div class="crumb">${datePick}<span class="muted">${ss.length}場 ${t.races.length}レース</span></div>
+    m.innerHTML = `${modeBar()}${freshLine(t.updated)}<div class="crumb">${datePick}<span class="muted">${ss.length}場 ${t.races.length}レース</span></div>
       <div class="stg"><div class="st wide" onclick="resetF({dec:'buy'});go('races',{rv:'list'})"><div style="flex:1"><b class="nm">全場の推奨レース</b>${nBuy ? `<span class="rec" style="position:static;margin-left:8px">★${nBuy}</span>` : ""}<div class="ln">${scored.length ? `確定 ${scored.filter(r => r.hit).length}/${scored.length}的中 · <span class="pl ${pnl >= 0 ? "pos" : "neg"}">${fmtY(pnl)}</span>` : (nBuy ? "結果待ち" : "まだ推奨はありません（締切4〜10分前に確定）")}</div></div><span style="color:var(--ink2)">›</span></div>
       ${ss.map(stadiumCard).join("")}</div>
       <p class="muted">場をタップすると、その場の全レース（推奨・見送りとも）を締切順に表示します。${state.mode === "focused" ? "絞り込み型の予想は各レースの締切4〜10分前に確定します（それまでは出走表だけの暫定表示）。" : ""}</p>`;
@@ -224,7 +232,7 @@ async function renderRaces(m) {
       <div class="tabs">${[["time", "締切順"], ["conf", "信頼度順"], ["ev", "期待値順"], ["pnl", "損益順"]].map(([k, l]) => `<button class="${f.sort === k ? "on" : ""}" onclick="setF('sort','${k}')">${l}</button>`).join("")}</div>
       <div class="rng"><div>信頼度 ≥ <b class="mono">${fmtP(f.cmin)}</b><input type="range" min="0" max="0.9" step="0.05" value="${f.cmin}" onchange="setF('cmin',+this.value)"></div>
         <div>期待値 ≥ <b class="mono">${f.evmin.toFixed(2)}</b><input type="range" min="0" max="1.5" step="0.05" value="${f.evmin}" onchange="setF('evmin',+this.value)"></div></div></details></div>
-    <p class="muted">${list.length}レース（全${t.races.length}レース中）${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}${JSON.stringify(f) !== JSON.stringify(Object.assign({}, F_DEFAULT, {dec: f.dec, stadium: f.stadium})) ? ` · <a href="#" onclick="resetF({dec:'${f.dec}',stadium:'${f.stadium}'});go('races');return false">条件を解除</a>` : ""}</p>
+    ${freshLine(t.updated)}<p class="muted">${list.length}レース（全${t.races.length}レース中）${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}${JSON.stringify(f) !== JSON.stringify(Object.assign({}, F_DEFAULT, {dec: f.dec, stadium: f.stadium})) ? ` · <a href="#" onclick="resetF({dec:'${f.dec}',stadium:'${f.stadium}'});go('races');return false">条件を解除</a>` : ""}</p>
     <div class="card">${list.length ? list.map(r => raceRow(r, !!f.stadium)).join("") : emptyRaces(t, f)}</div>`;
 }
 function emptyRaces(t, f) {
