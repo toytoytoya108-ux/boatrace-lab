@@ -112,21 +112,29 @@ def today(d: str | None = None, mode: str | None = None, stadium: int | None = N
     races = _q("""
         SELECT r.id, r.stadium_code, r.race_no, r.closed_at, r.grade, r.race_type, r.status,
                res.trifecta, res.trifecta_payout,
-               p.id AS prediction_id, p.stage, p.confidence, p.expected_return, p.decision, p.skip_reason, p.completeness, p.flags,
+               p.id AS prediction_id, p.stage, p.role AS pred_role, p.confidence, p.expected_return, p.decision, p.skip_reason, p.completeness, p.flags,
                (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,
                (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS stake_plan,
                sc.hit, sc.hit_kind, sc.pnl, sc.roi, sc.valid, sc.stake_total, sc.payout_total, sc.category
         FROM races r
         LEFT JOIN results res ON res.race_id = r.id
         LEFT JOIN predictions p ON p.id = (
-            SELECT p2.id FROM predictions p2 WHERE p2.race_id = r.id AND p2.role = :role
+            SELECT p2.id FROM predictions p2 WHERE p2.race_id = r.id
+              AND (p2.role = :role OR (p2.role = 'active' AND p2.stage = 'program'))
               AND (:mv IS NULL OR p2.model_version = :mv)
-            ORDER BY CASE p2.stage WHEN 'final' THEN 0 ELSE 1 END, p2.created_at DESC LIMIT 1)
+            ORDER BY CASE WHEN p2.role = :role THEN 0 ELSE 1 END, CASE p2.stage WHEN 'final' THEN 0 ELSE 1 END, p2.created_at DESC LIMIT 1)
         LEFT JOIN scoring sc ON sc.prediction_id = p.id
         WHERE r.race_date = :d AND (:st IS NULL OR r.stadium_code = :st)
         ORDER BY r.closed_at, r.stadium_code, r.race_no""", d=str(day), mv=mv, role=role, st=stadium)
     for r in races:
         r["stadium"] = STADIUMS.get(r["stadium_code"])
+        # 絞り込み型は確定予想（締切直前）しか保存しないため、それまでは15点固定側の暫定予想を「暫定」として見せる
+        r["provisional"] = bool(r["prediction_id"]) and r["pred_role"] != role
+        if r["provisional"]:
+            r["decision"] = None
+            r["skip_reason"] = None
+            r["n_points"] = None
+            r["stake_plan"] = None
     buys = [r for r in races if r["decision"] == "buy"]
     scored = [r for r in races if r["valid"]]
     day_pnl = {"n": len(scored), "stake": sum(r["stake_total"] or 0 for r in scored if r["decision"] == "buy"),
@@ -134,7 +142,7 @@ def today(d: str | None = None, mode: str | None = None, stadium: int | None = N
                "hits": sum(1 for r in scored if r["decision"] == "buy" and r["hit"]),
                "virtual_stake": sum(r["stake_total"] or 0 for r in scored), "virtual_payout": sum(r["payout_total"] or 0 for r in scored),
                "virtual_hits": sum(1 for r in scored if r["hit"])}
-    return {"date": str(day), "mode": mode or "std", "active_model": mv, "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"]),
+    return {"date": str(day), "mode": mode or "std", "active_model": mv, "n_races": len(races), "n_predicted": sum(1 for r in races if r["prediction_id"] and not r["provisional"]), "n_provisional": sum(1 for r in races if r["provisional"]),
             "n_buy": len(buys), "n_skip": sum(1 for r in races if r["decision"] == "skip"), "day": day_pnl,
             "top": sorted(buys, key=lambda r: -(r["confidence"] or 0) * (r["expected_return"] or 0))[:5], "races": races}
 

@@ -133,14 +133,15 @@ function renderLogin() {
 function kpi(label, val, cls="") { return `<div class="kpi"><b class="${cls}">${val}</b><span>${label}</span></div>`; }
 function planText(r) {
   if (!r.prediction_id) return "";
+  if (r.provisional) return "確定は締切直前";
   if (state.mode === "focused") return r.n_points ? `${r.n_points}点 ${fmtN(r.stake_plan)}円` : "候補なし";
   return `15点 ${fmtN(r.stake_plan || 3000)}円`;
 }
 function raceRow(r, compact) {
   const name = compact ? `${r.race_no}R <small style="display:inline;color:var(--ink2);font-weight:400">${r.stadium}</small>` : `${r.stadium} ${r.race_no}R`;
-  const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : `<span class="pill">未予想</span>`;
+  const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : (r.provisional ? `<span class="pill warn">暫定</span>` : `<span class="pill">未予想</span>`);
   const res = r.valid ? `<span class="pill ${r.hit ? "hit" : "miss"}">${r.hit ? "🎯 " + fmtY(r.pnl) : "外れ"}</span>` : (r.trifecta ? `<span class="pill">${r.trifecta}</span>` : "");
-  return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${name}</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}${r.stage === "program" ? "・暫定" : ""}</small>
+  return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${name}</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}${r.stage === "program" ? "・出走表のみ" : ""}</small>
     <div class="bar" style="margin-top:4px"><i style="width:${Math.round((r.confidence || 0) * 100)}%"></i></div></div>
     <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">EV ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div><div class="muted">${planText(r)}</div></div><div class="right">${dec}<br>${res}</div></div>`;
 }
@@ -172,9 +173,9 @@ function readinessCard(rd) {
 function stadiumSummary(races) {
   const by = new Map();
   for (const r of races) {
-    if (!by.has(r.stadium_code)) by.set(r.stadium_code, { code: r.stadium_code, name: r.stadium, grade: r.grade || "", n: 0, pred: 0, buy: 0, done: 0, next: null, stake: 0, pay: 0, hits: 0, scored: 0 });
+    if (!by.has(r.stadium_code)) by.set(r.stadium_code, { code: r.stadium_code, name: r.stadium, grade: r.grade || "", n: 0, pred: 0, prov: 0, buy: 0, done: 0, next: null, stake: 0, pay: 0, hits: 0, scored: 0 });
     const s = by.get(r.stadium_code);
-    s.n++; if (r.prediction_id) s.pred++; if (r.decision === "buy") s.buy++;
+    s.n++; if (r.prediction_id && !r.provisional) s.pred++; if (r.provisional) s.prov++; if (r.decision === "buy") s.buy++;
     if (r.trifecta) s.done++; else if (r.closed_at && (!s.next || r.closed_at < s.next)) s.next = r.closed_at;
     if (r.decision === "buy" && r.valid) { s.scored++; s.stake += r.stake_total || 0; s.pay += r.payout_total || 0; if (r.hit) s.hits++; }
   }
@@ -185,7 +186,7 @@ function stadiumCard(s) {
   const prog = fin ? "終了" : (s.done ? `${s.done}/${s.n}R終了` : "開始前") + (s.next ? ` · 次 ${hhmm(s.next)}締切` : "");
   const res = s.scored ? `<span class="pl ${pnl >= 0 ? "pos" : "neg"}">${s.hits}/${s.scored}的中 ${fmtY(pnl)}</span>` : (s.buy ? `<span class="pl">推奨${s.buy}R（結果待ち）</span>` : `<span class="muted">推奨なし</span>`);
   return `<div class="st ${fin ? "done" : ""}" onclick="resetF({stadium:'${s.code}',dec:'all'});go('races',{rv:'list'})"><b class="nm">${s.name}</b><span class="g">${s.grade}</span>${s.buy ? `<span class="rec">★${s.buy}</span>` : ""}
-    <div class="ln">${prog}</div><div class="ln">予想 ${s.pred}/${s.n}R · ${res}</div></div>`;
+    <div class="ln">${prog}</div><div class="ln">確定予想 ${s.pred}/${s.n}R${s.prov ? `（暫定${s.prov}）` : ""} · ${res}</div></div>`;
 }
 async function renderRaces(m) {
   const t = await api("/api/today?" + mq() + (state.day ? "&d=" + state.day : ""));
@@ -200,7 +201,7 @@ async function renderRaces(m) {
     m.innerHTML = `${modeBar()}<div class="crumb">${datePick}<span class="muted">${ss.length}場 ${t.races.length}レース</span></div>
       <div class="stg"><div class="st wide" onclick="resetF({dec:'buy'});go('races',{rv:'list'})"><div style="flex:1"><b class="nm">全場の推奨レース</b>${nBuy ? `<span class="rec" style="position:static;margin-left:8px">★${nBuy}</span>` : ""}<div class="ln">${scored.length ? `確定 ${scored.filter(r => r.hit).length}/${scored.length}的中 · <span class="pl ${pnl >= 0 ? "pos" : "neg"}">${fmtY(pnl)}</span>` : (nBuy ? "結果待ち" : "まだ推奨はありません（締切4〜10分前に確定）")}</div></div><span style="color:var(--ink2)">›</span></div>
       ${ss.map(stadiumCard).join("")}</div>
-      <p class="muted">場をタップすると、その場の全レース（推奨・見送りとも）を締切順に表示します。</p>`;
+      <p class="muted">場をタップすると、その場の全レース（推奨・見送りとも）を締切順に表示します。${state.mode === "focused" ? "絞り込み型の予想は各レースの締切4〜10分前に確定します（それまでは出走表だけの暫定表示）。" : ""}</p>`;
     return;
   }
   let list = t.races.filter(r => (!f.stadium || r.stadium_code === +f.stadium)
@@ -227,10 +228,10 @@ async function renderRaces(m) {
     <div class="card">${list.length ? list.map(r => raceRow(r, !!f.stadium)).join("") : emptyRaces(t, f)}</div>`;
 }
 function emptyRaces(t, f) {
-  const nBuy = t.races.filter(r => r.decision === "buy").length, nPred = t.races.filter(r => r.prediction_id).length;
+  const nBuy = t.races.filter(r => r.decision === "buy").length, nPred = t.races.filter(r => r.prediction_id && !r.provisional).length;
   let why;
   if (f.dec === "buy" && nBuy === 0) why = state.mode === "focused"
-    ? `今日はまだ推奨レースがありません（絞り込み型は自信上位20%のレースだけを、締切4〜10分前の確定予想で選びます。予想済み ${nPred}/${t.races.length}R）。`
+    ? `今日はまだ推奨レースがありません（絞り込み型は自信上位のレースだけを、締切4〜10分前の確定予想で選びます。確定済み ${nPred}/${t.races.length}R、暫定 ${t.races.filter(r => r.provisional).length}R）。`
     : `今日はまだ推奨レースがありません（予想済み ${nPred}/${t.races.length}R。購入候補条件を満たすレースは少なめです）。`;
   else why = `条件に合うレースがありません（推奨 ${nBuy}R / 予想済み ${nPred}R / 全 ${t.races.length}R）。`;
   return `<p class="muted">${why}</p><p><button class="btn ghost" onclick="resetF({dec:'all',stadium:'${f.stadium}'});go('races')">全レースを見る</button> <button class="btn ghost" onclick="go('races',{rv:'stadiums'})">場一覧へ</button></p>`;
