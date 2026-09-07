@@ -1,0 +1,3 @@
+model,logloss,hit15,roi15,buy_n,buy_roi,focused_n,focused_hit,focused_roi,focused_avg_stake
+Model 1.0,3.7983,0.5593,0.7893,1903,0.7658,12924,0.2041,0.8136,2502
+Model 1.2,3.7894,0.5628,0.7912,1439,0.7898,13189,0.2083,0.8093,2490

@@ -29,7 +29,10 @@
   1実験=1サブプロセス（6GBメモリ対策）、期ごとに `.ckpt.pkl` へチェックポイント（途中落ち再開可）。
 - 結果は `reports/backtest/fs2_experiments.{csv,md}` に追記。判定は 3連単 log-loss が基準比 −0.001 以上。
 - 結果（run_fs2_fast.py、単一分割）: form −0.0058 / exh_trust −0.0014 が有効、form+exh_trust=3.8090（base 3.8171）。他は誤差。
-- 次: form+exh_trust で Model 1.2 を全期間WF＋ROI＋封印テストで本検証→shadow並走→PWAでユーザーが採用判断。
+- Model 1.2（form+exh_trust）本検証済み（`scripts/run_model12_wf.py`、`reports/backtest/model12_{valid,test}.md`）:
+  valid log-loss 3.8108→3.8039、封印テスト 3.7983→3.7894。精度は一貫して改善、回収率は横ばい
+  （15点 78.9→79.1%、絞り込み型 81.4→80.9%）。**未採用・未並走**（ユーザー判断: 別の改善を先に）。
+  probstore は `data/probstores/m12_{valid,test}.pkl`（サンドボックスのみ）。
 
 ## データの置き場所（重要）
 - `data/`（lab.db 2.2GB、features 1.3GB、probstores 3.2GB、models）は **.gitignore でリポジトリに入らない**。
