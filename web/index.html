@@ -11,23 +11,27 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0E4F63">
 <style>
-:root{--bg:#F2F5F6;--sf:#fff;--sf2:#E8EEF0;--ink:#17262C;--ink2:#4E6068;--line:#D3DCE0;--acc:#0E4F63;--acc2:#6FB7CC;--buoy:#D9581F;--ok:#2E7D5B;--okbg:#E4F2EA;--ng:#B23A3A;--ngbg:#F8E5E5;--warnbg:#FFF4D6;--warn:#8A5A00;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-@media(prefers-color-scheme:dark){:root{--bg:#0F181C;--sf:#162228;--sf2:#1E2D34;--ink:#E3ECF0;--ink2:#9DB0B8;--line:#2A3A42;--acc:#6FB7CC;--acc2:#0E4F63;--buoy:#F0844E;--ok:#7CCBA3;--okbg:#16302A;--ng:#F08080;--ngbg:#3A1C1C;--warnbg:#3A2E10;--warn:#F2C766}}
+:root{--bg:#F2F5F6;--sf:#fff;--sf2:#E8EEF0;--ink:#17262C;--ink2:#4E6068;--line:#D3DCE0;--acc:#0E4F63;--acc2:#6FB7CC;--buoy:#D9581F;--ok:#2E7D5B;--okbg:#E4F2EA;--ng:#B23A3A;--ngbg:#F8E5E5;--warnbg:#FFF4D6;--warn:#8A5A00;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--mode:var(--acc);--modebg:#E3F0F4}
+body[data-mode=std]{--mode:#8A4A1B;--modebg:#F6E9DF}
+@media(prefers-color-scheme:dark){:root{--bg:#0F181C;--sf:#162228;--sf2:#1E2D34;--ink:#E3ECF0;--ink2:#9DB0B8;--line:#2A3A42;--acc:#6FB7CC;--acc2:#0E4F63;--buoy:#F0844E;--ok:#7CCBA3;--okbg:#16302A;--ng:#F08080;--ngbg:#3A1C1C;--warnbg:#3A2E10;--warn:#F2C766;--modebg:#12313A}body[data-mode=std]{--mode:#F0A46E;--modebg:#3A2A1E}}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
 .app{max-width:640px;margin:0 auto;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
-header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:2px solid var(--acc)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:3px solid var(--mode)}
 header h1{margin:0;font-size:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap}header .sub{font-size:11px;color:var(--ink2);font-family:var(--mono);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.modeTog{display:flex;border:1px solid var(--acc);border-radius:999px;overflow:hidden;flex:0 0 auto}.modeTog button{font:inherit;font-size:12px;border:0;background:none;color:var(--acc);padding:5px 10px;min-height:32px}.modeTog button.on{background:var(--acc);color:#fff}
+.modeTog{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto;background:var(--sf)}.modeTog button{font:inherit;font-size:12px;font-weight:700;line-height:1.15;border:0;background:none;color:var(--ink2);padding:4px 10px;min-height:38px;display:flex;flex-direction:column;align-items:center;justify-content:center}.modeTog button small{font-size:9px;font-weight:400;opacity:.85}.modeTog button.on{background:var(--mode);color:#fff}
+.modeBar{display:flex;align-items:center;gap:10px;background:var(--modebg);border-left:4px solid var(--mode);border-radius:10px;padding:10px 12px;margin:10px 0}.modeBar .t{flex:1;min-width:0}.modeBar .t b{color:var(--mode);font-size:15px}.modeBar .t small{display:block;color:var(--ink2);font-size:12px}.modeBar button{flex:0 0 auto;font:inherit;font-size:12px;border:1px solid var(--mode);background:var(--sf);color:var(--mode);border-radius:8px;padding:6px 10px;min-height:36px}
+.stg{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stg .st{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;position:relative}.stg .st.wide{grid-column:1/-1;display:flex;align-items:center;gap:10px}.stg .st b.nm{font-size:16px}.stg .st .g{font-size:11px;color:var(--ink2);margin-left:4px}.stg .st .ln{font-size:12px;color:var(--ink2);margin-top:2px}.stg .st .rec{position:absolute;right:10px;top:9px;font-family:var(--mono);font-size:12px;color:#fff;background:var(--mode);border-radius:999px;padding:1px 8px}.stg .st.done{opacity:.75}.stg .st .pl{font-family:var(--mono);font-size:12px}.stg .st .pl.pos{color:var(--ok)}.stg .st .pl.neg{color:var(--ng)}
+.crumb{display:flex;align-items:center;gap:8px;margin:6px 0 2px}.crumb button{font:inherit;font-size:13px;border:0;background:none;color:var(--acc);padding:6px 4px 6px 0;min-height:36px}.crumb b{font-size:16px}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--sf);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:10}
 nav button{flex:1;border:0;background:none;color:var(--ink2);font:inherit;font-size:11px;padding:8px 0 6px;min-height:52px}nav button.on{color:var(--acc);font-weight:700}nav button span{display:block;font-size:20px}
 .card{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
-.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 6px;text-align:center}.kpi b{display:block;font-family:var(--mono);font-size:19px;font-variant-numeric:tabular-nums;color:var(--acc)}.kpi span{font-size:11px;color:var(--ink2)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.kpi{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 6px;text-align:center}.kpi b{display:block;font-family:var(--mono);font-size:19px;font-variant-numeric:tabular-nums;color:var(--mode)}.kpi span{font-size:11px;color:var(--ink2)}
 .kpi b.pos{color:var(--ok)}.kpi b.neg{color:var(--ng)}
 h2{font-size:15px;margin:18px 0 6px}h3{font-size:14px;margin:12px 0 4px;color:var(--ink2)}
 .row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}.row:last-child{border-bottom:0}.row .t{flex:1;min-width:0}.row .t b{font-size:15px}.row .t small{display:block;color:var(--ink2);font-size:12px}
 .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap;font-family:var(--mono)}
-.pill.buy{background:var(--acc);color:#fff;border-color:transparent}.pill.skip{background:var(--sf2);color:var(--ink2)}.pill.hit{background:var(--okbg);color:var(--ok);border-color:transparent}.pill.miss{background:var(--ngbg);color:var(--ng);border-color:transparent}.pill.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
-.bar{height:6px;background:var(--sf2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc)}
+.pill.buy{background:var(--mode);color:#fff;border-color:transparent}.pill.skip{background:var(--sf2);color:var(--ink2)}.pill.hit{background:var(--okbg);color:var(--ok);border-color:transparent}.pill.miss{background:var(--ngbg);color:var(--ng);border-color:transparent}.pill.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
+.bar{height:6px;background:var(--sf2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--mode)}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}.muted{color:var(--ink2);font-size:12px}.right{text-align:right}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:left}th{font-size:11px;color:var(--ink2);font-weight:600}td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .tbl{overflow-x:auto}
@@ -46,6 +50,7 @@ label{display:block;font-size:13px;color:var(--ink2);margin:8px 0}label input,la
 .filt .rng{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:var(--ink2)}.filt .rng input[type=range]{padding:0;height:28px}
 .judge{border-left:4px solid var(--acc);padding-left:10px}.judge.ok{border-color:var(--ok)}.judge.ng{border-color:var(--buoy)}
 details summary{cursor:pointer;color:var(--acc);font-size:13px}
+details.sec{margin:10px 0}details.sec>summary{font-size:15px;font-weight:700;color:var(--ink);padding:10px 12px;background:var(--sf);border:1px solid var(--line);border-radius:10px;list-style:none;display:flex;justify-content:space-between;align-items:center}details.sec>summary::-webkit-details-marker{display:none}details.sec>summary::after{content:"＋";color:var(--ink2);font-weight:400}details.sec[open]>summary::after{content:"－"}details.sec[open]>summary{border-radius:10px 10px 0 0}details.sec>.card{margin-top:0;border-top:0;border-radius:0 0 10px 10px}
 .offline{background:var(--warnbg);color:var(--warn);font-size:12px;padding:6px 10px;border-radius:8px;margin:8px 0;display:none}
 .login{max-width:320px;margin:80px auto;text-align:center}
 pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;border-radius:8px;overflow-x:auto}
@@ -54,7 +59,7 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 </head>
 <body>
 <div class="app" id="app">
-  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="focused">絞り込み</button><button data-m="std">15点</button></div></header>
+  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="focused">絞り込み型<small>推奨用</small></button><button data-m="std">15点固定<small>比較用</small></button></div></header>
   <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
   <main id="main"></main>
 </div>
@@ -72,14 +77,17 @@ const fmtY = v => v==null ? "–" : (v>=0?"+":"") + Math.round(v).toLocaleString
 const fmtN = v => v==null ? "–" : Math.round(v).toLocaleString();
 const hhmm = s => s ? s.slice(11,16) : "";
 let saved = {}; try { saved = JSON.parse(localStorage.getItem("bl_state") || "{}"); } catch (e) {}
-const state = Object.assign({ view: "home", raceId: null, day: null, mode: "focused", statsBy: "month", statsStadium: "", statsRange: "all",
+const state = Object.assign({ view: "home", raceId: null, day: null, mode: "focused", rv: "stadiums", statsBy: "month", statsStadium: "", statsRange: "all",
   f: { stadium: "", dec: "buy", res: "", cmin: 0, evmin: 0, sort: "time" } }, saved);
 const F_DEFAULT = { stadium: "", dec: "buy", res: "", cmin: 0, evmin: 0, sort: "time" };
 function resetF(partial) { state.f = Object.assign({}, F_DEFAULT, partial || {}); persist(); }
-function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, statsBy: state.statsBy })); } catch (e) {} }
+function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, rv: state.rv, statsBy: state.statsBy })); } catch (e) {} }
 const REASON = { confidence: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得", low_agreement: "モデル不一致", no_value_points: "妙味のある買い目なし", odds_estimated: "実オッズ未取得" };
 const MODE_ROLE = { std: "active", focused: "focused" };
 const MODE_NAME = { std: "15点固定", focused: "絞り込み型" };
+const MODE_DESC = { focused: "推奨用。自信のあるレースだけ、妙味のある買い目を最大5点", std: "比較用。全レース本線10点＋穴5点を仮想記録（推奨はほぼ出ません）" };
+const OTHER = m => m === "focused" ? "std" : "focused";
+function modeBar() { return `<div class="modeBar"><div class="t"><b>${MODE_NAME[state.mode]}</b> <span class="muted">を表示中</span><small>${MODE_DESC[state.mode]}</small></div><button onclick="setMode('${OTHER(state.mode)}')">${MODE_NAME[OTHER(state.mode)]}に切替</button></div>`; }
 const mq = () => "mode=" + state.mode;
 
 async function api(path, opt) {
@@ -101,11 +109,12 @@ function go(view, extra, opts) {
 function goBack() { if (history.state && history.state.view === "race") history.back(); else go(state.backView || "races"); }
 window.addEventListener("popstate", () => { if (state.view === "race") go(state.backView || "races", null, { pop: true }); });
 function setMode(m) { state.mode = m; persist(); render(); }
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.v));
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.v, b.dataset.v === "races" ? { rv: "stadiums" } : null));
 document.querySelectorAll("#modeTog button").forEach(b => b.onclick = () => setMode(b.dataset.m));
 
 async function render() {
   document.querySelectorAll("#modeTog button").forEach(b => b.classList.toggle("on", b.dataset.m === state.mode));
+  document.body.dataset.mode = state.mode;
   const hdr = document.querySelector("header"); if (hdr) document.documentElement.style.setProperty("--hdr", hdr.offsetHeight + "px");
   const m = $("#main"); m.innerHTML = '<p class="muted">読み込み中…</p>';
   try {
@@ -127,10 +136,11 @@ function planText(r) {
   if (state.mode === "focused") return r.n_points ? `${r.n_points}点 ${fmtN(r.stake_plan)}円` : "候補なし";
   return `15点 ${fmtN(r.stake_plan || 3000)}円`;
 }
-function raceRow(r) {
+function raceRow(r, compact) {
+  const name = compact ? `${r.race_no}R <small style="display:inline;color:var(--ink2);font-weight:400">${r.stadium}</small>` : `${r.stadium} ${r.race_no}R`;
   const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : `<span class="pill">未予想</span>`;
   const res = r.valid ? `<span class="pill ${r.hit ? "hit" : "miss"}">${r.hit ? "🎯 " + fmtY(r.pnl) : "外れ"}</span>` : (r.trifecta ? `<span class="pill">${r.trifecta}</span>` : "");
-  return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${r.stadium} ${r.race_no}R</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}${r.stage === "program" ? "・暫定" : ""}</small>
+  return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${name}</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}${r.stage === "program" ? "・暫定" : ""}</small>
     <div class="bar" style="margin-top:4px"><i style="width:${Math.round((r.confidence || 0) * 100)}%"></i></div></div>
     <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">EV ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div><div class="muted">${planText(r)}</div></div><div class="right">${dec}<br>${res}</div></div>`;
 }
@@ -139,12 +149,13 @@ async function renderHome(m) {
   const fc = Object.assign({ s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, budget: 3000 }, (st.extra || {}).focused || {});
   $("#hdr").textContent = t.date + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
   const d = t.day, cum = s.buy, r100 = s.recent100_buy;
-  m.innerHTML = `
-    <p class="muted">表示中の買い方：<b>${MODE_NAME[state.mode]}</b>${state.mode === "focused" ? `（自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点、1レース最大${fmtN(fc.budget)}円）` : "（本線10点＋穴5点、3,000円）"}</p>
+  m.innerHTML = `${modeBar()}
+    <p class="muted">${state.mode === "focused" ? `いまの条件：自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点・1レース最大${fmtN(fc.budget)}円` : "条件：本線10点＋穴5点、1レース3,000円（購入候補＝信頼度と期待回収率が基準以上）"}</p>
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
-    <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races');return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
-    <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="resetF({stadium:'${c}',dec:'all'});go('races')">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
-    <p class="muted">場をタップするとその場の全レース（推奨・見送りとも）を一覧で開きます。★＝推奨あり</p>
+    <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races',{rv:'list'});return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
+    ${t.races.length ? `<h2>今日の開催場 <a href="#" class="muted" style="font-weight:400;float:right" onclick="go('races',{rv:'stadiums'});return false">場の一覧へ ›</a></h2>
+    <div class="tabs">${[...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]).map(([c, n]) => `<button onclick="resetF({stadium:'${c}',dec:'all'});go('races',{rv:'list'})">${n} ${t.races.filter(r => r.stadium_code === c && r.decision === "buy").length ? "★" : ""}</button>`).join("")}</div>
+    <p class="muted">★＝推奨あり。タップでその場の全レースを開きます</p>` : ""}
     <h2>本日の仮想収支（推奨のみ）</h2><div class="kpis">${kpi("投資", fmtN(d.stake)+"円")}${kpi("払戻", fmtN(d.payout)+"円")}${kpi("損益", fmtY(d.payout - d.stake), d.payout - d.stake >= 0 ? "pos" : "neg")}</div>
     <p class="muted">見送り含む全レース仮想：${d.virtual_hits}/${d.n} 的中、${fmtY(d.virtual_payout - d.virtual_stake)}</p>
     <h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", cum.n)}${kpi("的中率", fmtP(cum.hit_rate))}${kpi("回収率", fmtP(cum.roi), (cum.roi || 0) >= 1 ? "pos" : "")}</div>
@@ -157,12 +168,41 @@ function readinessCard(rd) {
   return `<div class="card judge ${rd.passed ? "ok" : "ng"}"><table><tr><th>条件</th><th class="n">現在</th><th class="n">目標</th><th></th></tr>${rows}</table>
     <p><b>判定：${rd.passed ? "実戦投入条件クリア" : "実戦投入条件：未達"}</b></p>${rd.warnings.map(w => `<p class="pill warn" style="white-space:normal">⚠ ${w}</p>`).join("")}<p class="muted">${rd.note}</p></div>`;
 }
-// ---------------- レース一覧（絞り込み・並べ替え）
+// ---------------- レース一覧：場一覧 → 場ごとのレース一覧（絞り込み・並べ替え）
+function stadiumSummary(races) {
+  const by = new Map();
+  for (const r of races) {
+    if (!by.has(r.stadium_code)) by.set(r.stadium_code, { code: r.stadium_code, name: r.stadium, grade: r.grade || "", n: 0, pred: 0, buy: 0, done: 0, next: null, stake: 0, pay: 0, hits: 0, scored: 0 });
+    const s = by.get(r.stadium_code);
+    s.n++; if (r.prediction_id) s.pred++; if (r.decision === "buy") s.buy++;
+    if (r.trifecta) s.done++; else if (r.closed_at && (!s.next || r.closed_at < s.next)) s.next = r.closed_at;
+    if (r.decision === "buy" && r.valid) { s.scored++; s.stake += r.stake_total || 0; s.pay += r.payout_total || 0; if (r.hit) s.hits++; }
+  }
+  return [...by.values()].sort((a, b) => a.code - b.code);
+}
+function stadiumCard(s) {
+  const pnl = s.pay - s.stake, fin = s.done >= s.n;
+  const prog = fin ? "終了" : (s.done ? `${s.done}/${s.n}R終了` : "開始前") + (s.next ? ` · 次 ${hhmm(s.next)}締切` : "");
+  const res = s.scored ? `<span class="pl ${pnl >= 0 ? "pos" : "neg"}">${s.hits}/${s.scored}的中 ${fmtY(pnl)}</span>` : (s.buy ? `<span class="pl">推奨${s.buy}R（結果待ち）</span>` : `<span class="muted">推奨なし</span>`);
+  return `<div class="st ${fin ? "done" : ""}" onclick="resetF({stadium:'${s.code}',dec:'all'});go('races',{rv:'list'})"><b class="nm">${s.name}</b><span class="g">${s.grade}</span>${s.buy ? `<span class="rec">★${s.buy}</span>` : ""}
+    <div class="ln">${prog}</div><div class="ln">予想 ${s.pred}/${s.n}R · ${res}</div></div>`;
+}
 async function renderRaces(m) {
   const t = await api("/api/today?" + mq() + (state.day ? "&d=" + state.day : ""));
   $("#hdr").textContent = t.date;
   const f = state.f;
   const stadiums = [...new Map(t.races.map(r => [r.stadium_code, r.stadium])).entries()].sort((a, b) => a[0] - b[0]);
+  const datePick = `<input type="date" value="${t.date}" style="width:auto;padding:4px 8px;min-height:32px" onchange="go('races',{day:this.value})">`;
+  if (state.rv !== "list") {
+    const ss = stadiumSummary(t.races), d = t.day;
+    const nBuy = t.races.filter(r => r.decision === "buy").length, scored = t.races.filter(r => r.decision === "buy" && r.valid);
+    const pnl = d.payout - d.stake;
+    m.innerHTML = `${modeBar()}<div class="crumb">${datePick}<span class="muted">${ss.length}場 ${t.races.length}レース</span></div>
+      <div class="stg"><div class="st wide" onclick="resetF({dec:'buy'});go('races',{rv:'list'})"><div style="flex:1"><b class="nm">全場の推奨レース</b>${nBuy ? `<span class="rec" style="position:static;margin-left:8px">★${nBuy}</span>` : ""}<div class="ln">${scored.length ? `確定 ${scored.filter(r => r.hit).length}/${scored.length}的中 · <span class="pl ${pnl >= 0 ? "pos" : "neg"}">${fmtY(pnl)}</span>` : (nBuy ? "結果待ち" : "まだ推奨はありません（締切4〜10分前に確定）")}</div></div><span style="color:var(--ink2)">›</span></div>
+      ${ss.map(stadiumCard).join("")}</div>
+      <p class="muted">場をタップすると、その場の全レース（推奨・見送りとも）を締切順に表示します。</p>`;
+    return;
+  }
   let list = t.races.filter(r => (!f.stadium || r.stadium_code === +f.stadium)
     && (f.dec === "all" || (f.dec === "buy" ? r.decision === "buy" : r.decision === "skip"))
     && (!f.res || (f.res === "hit" ? r.valid && r.hit : f.res === "miss" ? r.valid && !r.hit : !r.valid))
@@ -172,16 +212,19 @@ async function renderRaces(m) {
   const setF = (k, v) => { state.f[k] = v; persist(); render(); };
   window.setF = setF;
   const stake = list.filter(r => r.valid).reduce((a, r) => a + (r.stake_total || 0), 0), pay = list.filter(r => r.valid).reduce((a, r) => a + (r.payout_total || 0), 0);
+  const title = f.stadium ? (stadiums.find(([c]) => c === +f.stadium) || [0, "?"])[1] : "全場";
+  const advanced = f.sort !== "time" || f.cmin > 0 || f.evmin > 0 || f.res !== "";
   m.innerHTML = `<div class="filt">
-    <div class="tabs"><input type="date" value="${t.date}" style="width:auto;padding:4px 8px;min-height:32px" onchange="go('races',{day:this.value})">
-      <button class="${!f.stadium ? "on" : ""}" onclick="setF('stadium','')">全場</button>${stadiums.map(([c, n]) => `<button class="${+f.stadium === c ? "on" : ""}" onclick="setF('stadium','${c}')">${n}</button>`).join("")}</div>
-    <div class="tabs">${[["buy", "推奨"], ["skip", "見送り"], ["all", "全部"]].map(([k, l]) => `<button class="${f.dec === k ? "on" : ""}" onclick="setF('dec','${k}')">${l}</button>`).join("")}
-      <span style="width:8px"></span>${[["", "結果:全"], ["hit", "的中"], ["miss", "外れ"], ["pending", "未確定"]].map(([k, l]) => `<button class="${f.res === k ? "on" : ""}" onclick="setF('res','${k}')">${l}</button>`).join("")}
-      <span style="width:8px"></span>${[["time", "締切順"], ["conf", "信頼度順"], ["ev", "期待値順"], ["pnl", "損益順"]].map(([k, l]) => `<button class="${f.sort === k ? "on" : ""}" onclick="setF('sort','${k}')">${l}</button>`).join("")}</div>
-    <div class="rng"><div>信頼度 ≥ <b class="mono">${fmtP(f.cmin)}</b><input type="range" min="0" max="0.9" step="0.05" value="${f.cmin}" onchange="setF('cmin',+this.value)"></div>
-      <div>期待値 ≥ <b class="mono">${f.evmin.toFixed(2)}</b><input type="range" min="0" max="1.5" step="0.05" value="${f.evmin}" onchange="setF('evmin',+this.value)"></div></div></div>
-    <p class="muted">${list.length}レース（全${t.races.length}レース中）${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}${JSON.stringify(f) !== JSON.stringify(Object.assign({}, F_DEFAULT, {dec: f.dec})) ? ` · <a href="#" onclick="resetF({dec:'${f.dec}'});go('races');return false">絞り込みを解除</a>` : ""}</p>
-    <div class="card">${list.length ? list.map(raceRow).join("") : emptyRaces(t, f)}</div>`;
+    <div class="crumb"><button onclick="go('races',{rv:'stadiums'})">‹ 場一覧</button><b>${title}</b><span class="muted">${MODE_NAME[state.mode]}</span>${datePick}</div>
+    <div class="tabs">${stadiums.map(([c, n]) => `<button class="${+f.stadium === c ? "on" : ""}" onclick="setF('stadium','${c}')">${n}</button>`).join("")}<button class="${!f.stadium ? "on" : ""}" onclick="setF('stadium','')">全場</button></div>
+    <div class="tabs">${[["all", "全レース"], ["buy", "推奨のみ"], ["skip", "見送りのみ"]].map(([k, l]) => `<button class="${f.dec === k ? "on" : ""}" onclick="setF('dec','${k}')">${l}</button>`).join("")}
+      <span style="width:8px"></span>${[["", "結果:全"], ["hit", "的中"], ["miss", "外れ"], ["pending", "未確定"]].map(([k, l]) => `<button class="${f.res === k ? "on" : ""}" onclick="setF('res','${k}')">${l}</button>`).join("")}</div>
+    <details ${advanced ? "open" : ""}><summary>並べ替え・詳細条件${advanced ? "（適用中）" : ""}</summary>
+      <div class="tabs">${[["time", "締切順"], ["conf", "信頼度順"], ["ev", "期待値順"], ["pnl", "損益順"]].map(([k, l]) => `<button class="${f.sort === k ? "on" : ""}" onclick="setF('sort','${k}')">${l}</button>`).join("")}</div>
+      <div class="rng"><div>信頼度 ≥ <b class="mono">${fmtP(f.cmin)}</b><input type="range" min="0" max="0.9" step="0.05" value="${f.cmin}" onchange="setF('cmin',+this.value)"></div>
+        <div>期待値 ≥ <b class="mono">${f.evmin.toFixed(2)}</b><input type="range" min="0" max="1.5" step="0.05" value="${f.evmin}" onchange="setF('evmin',+this.value)"></div></div></details></div>
+    <p class="muted">${list.length}レース（全${t.races.length}レース中）${stake ? ` · 確定分 投資${fmtN(stake)}円 / 払戻${fmtN(pay)}円 / 回収率${fmtP(pay / stake)}` : ""}${JSON.stringify(f) !== JSON.stringify(Object.assign({}, F_DEFAULT, {dec: f.dec, stadium: f.stadium})) ? ` · <a href="#" onclick="resetF({dec:'${f.dec}',stadium:'${f.stadium}'});go('races');return false">条件を解除</a>` : ""}</p>
+    <div class="card">${list.length ? list.map(r => raceRow(r, !!f.stadium)).join("") : emptyRaces(t, f)}</div>`;
 }
 function emptyRaces(t, f) {
   const nBuy = t.races.filter(r => r.decision === "buy").length, nPred = t.races.filter(r => r.prediction_id).length;
@@ -190,7 +233,7 @@ function emptyRaces(t, f) {
     ? `今日はまだ推奨レースがありません（絞り込み型は自信上位20%のレースだけを、締切4〜10分前の確定予想で選びます。予想済み ${nPred}/${t.races.length}R）。`
     : `今日はまだ推奨レースがありません（予想済み ${nPred}/${t.races.length}R。購入候補条件を満たすレースは少なめです）。`;
   else why = `条件に合うレースがありません（推奨 ${nBuy}R / 予想済み ${nPred}R / 全 ${t.races.length}R）。`;
-  return `<p class="muted">${why}</p><p><button class="btn ghost" onclick="resetF({dec:'all'});go('races')">全レースを見る</button></p>`;
+  return `<p class="muted">${why}</p><p><button class="btn ghost" onclick="resetF({dec:'all',stadium:'${f.stadium}'});go('races')">全レースを見る</button> <button class="btn ghost" onclick="go('races',{rv:'stadiums'})">場一覧へ</button></p>`;
 }
 // ---------------- レース詳細（フォーメーション表示）
 function formationView(sels, won) {
@@ -262,7 +305,7 @@ async function renderStats(m) {
   const by = state.statsBy, b = s.buy, v = s.all_virtual;
   const tabs = [["month", "月別"], ["stadium", "場別"], ["grade", "グレード"], ["odds_band", "オッズ帯"], ["confidence_band", "信頼度帯"], ["kind", "本線/穴"], ["model_version", "モデル"]];
   const cols = bd.length ? Object.keys(bd[0]) : [];
-  m.innerHTML = `<p class="muted">${MODE_NAME[state.mode]}の成績</p>
+  m.innerHTML = `${modeBar()}
     <div class="two"><select onchange="go('stats',{statsStadium:this.value})"><option value="">全場</option>${sts.map(x => `<option value="${x.code}" ${+state.statsStadium === x.code ? "selected" : ""}>${x.name}</option>`).join("")}</select>
       <select onchange="go('stats',{statsRange:this.value})">${[["all", "全期間"], ["m", "今月"], ["w", "直近7日"], ["d", "今日"]].map(([k, l]) => `<option value="${k}" ${state.statsRange === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
     <h2>累計（推奨レース）</h2><div class="kpis">${kpi("レース", b.n)}${kpi("的中率", fmtP(b.hit_rate))}${kpi("回収率", fmtP(b.roi), (b.roi || 0) >= 1 ? "pos" : "")}${kpi("損益", fmtY(b.pnl), b.pnl >= 0 ? "pos" : "neg")}${kpi("最大連敗", b.max_losing_streak)}${kpi("最大DD", fmtN(b.max_drawdown) + "円")}</div>
@@ -286,26 +329,26 @@ async function renderSettings(m) {
   const fc = Object.assign({ enabled: true, s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, cap: 1000, budget: 3000, power: 1.0, completeness_min: 0.6, require_real_odds: false }, ex.focused || {});
   const rf = Object.assign({ min_races: 500, roi: 1.0, roi_ci_lower: 0.95, recent_n: 100, recent_roi: 1.0 }, ex.readiness_focused || {});
   const num = (id, label, v, step, extra="") => `<label>${label}<input id="${id}" type="number" step="${step}" value="${v}" ${extra}></label>`;
-  m.innerHTML = `<h2>絞り込み型の買い方</h2><div class="card">
+  m.innerHTML = `${modeBar()}<details class="sec" open><summary>絞り込み型の買い方 <span class="muted">推奨用</span></summary><div class="card">
       <label>有効<select id="fc_enabled"><option value="1" ${fc.enabled ? "selected" : ""}>毎日保存する</option><option value="0" ${!fc.enabled ? "selected" : ""}>停止</option></select></label>
       <div class="two">${num("fc_s15", "自信の下限（上位15点の確率和）", fc.s15_min, 0.01)}${num("fc_ev", "期待値の下限", fc.ev_min, 0.05)}</div>
       <div class="two">${num("fc_olo", "オッズ下限（倍）", fc.odds_lo, 1)}${num("fc_ohi", "オッズ上限（倍）", fc.odds_hi, 5)}</div>
       <div class="two">${num("fc_max", "最大点数", fc.max_points, 1, 'min="1" max="15"')}${num("fc_cap", "1点の上限（円）", fc.cap, 100)}</div>
       <div class="two">${num("fc_budget", "1レース予算（円）", fc.budget, 100)}${num("fc_power", "配分の指数（1=確率比例）", fc.power, 0.5)}</div>
       <label>実オッズが無いときは見送る<select id="fc_real"><option value="0" ${!fc.require_real_odds ? "selected" : ""}>推定オッズでも買い目を出す</option><option value="1" ${fc.require_real_odds ? "selected" : ""}>見送る</option></select></label>
-      <p class="muted">検証期間（2024-01〜2025-06）ではこの既定値で対象20%・平均3点・回収率85.3%。値を変えると次の確定予想から適用され、過去の予想は変わりません。</p></div>
-    <h2>実戦投入条件（絞り込み型）</h2><div class="card"><div class="two">${num("rf_min_races", "対象レース数", rf.min_races, 50)}${num("rf_roi", "累計回収率", rf.roi, 0.01)}</div>
+      <p class="muted">検証（2024-01〜2025-06、推定オッズ）では既定値で対象20%・平均3点・回収率85.3%。2026年の実オッズでは「上限20倍・期待値0.8」が安定（的中23%・回収率83%、探索/確認の両期間で一致）。値を変えると次の確定予想から適用され、過去の予想は変わりません。</p></div></details>
+    <details class="sec"><summary>実戦投入条件（絞り込み型）</summary><div class="card"><div class="two">${num("rf_min_races", "対象レース数", rf.min_races, 50)}${num("rf_roi", "累計回収率", rf.roi, 0.01)}</div>
       <div class="two">${num("rf_roi_ci_lower", "回収率95%区間の下限", rf.roi_ci_lower, 0.01)}${num("rf_recent_roi", "直近回収率", rf.recent_roi, 0.01)}</div>${num("rf_recent_n", "直近の本数", rf.recent_n, 10)}
-      <p class="muted">「区間下限」を入れることで、たまたま調子が良かっただけの期間を実戦投入と誤認しにくくなります。</p></div>
-    <h2>15点固定の購入候補条件</h2><div class="card"><label>信頼度（下限）<input id="cmin" type="number" step="0.01" value="${s.confidence_min}"></label><label>期待回収率（下限）<input id="emin" type="number" step="0.01" value="${s.ev_min}"></label><label>データ完全性（下限）<input id="cpl" type="number" step="0.05" value="${s.completeness_min}"></label></div>
-    <h2>実戦投入条件（15点固定）</h2><div class="card">${Object.entries(rd).map(([k, v]) => `<label>${k}<input id="rd_${k}" type="number" step="0.01" value="${v}"></label>`).join("")}</div>
-    <h2>15点固定の資金配分（合計 ${(s.points * s.stake_per_point).toLocaleString()}円）</h2><div class="card">
+      <p class="muted">「区間下限」を入れることで、たまたま調子が良かっただけの期間を実戦投入と誤認しにくくなります。</p></div></details>
+    <details class="sec"><summary>15点固定の購入候補条件 <span class="muted">比較用</span></summary><div class="card"><label>信頼度（下限）<input id="cmin" type="number" step="0.01" value="${s.confidence_min}"></label><label>期待回収率（下限）<input id="emin" type="number" step="0.01" value="${s.ev_min}"></label><label>データ完全性（下限）<input id="cpl" type="number" step="0.05" value="${s.completeness_min}"></label></div></details>
+    <details class="sec"><summary>実戦投入条件（15点固定）</summary><div class="card">${Object.entries(rd).map(([k, v]) => `<label>${k}<input id="rd_${k}" type="number" step="0.01" value="${v}"></label>`).join("")}</div></details>
+    <details class="sec"><summary>15点固定の資金配分（合計 ${(s.points * s.stake_per_point).toLocaleString()}円）</summary><div class="card">
       <label>方式<select id="stk_method">${[["uniform","均等（200円×15点）"],["prob","確率比例（本線上位に厚く）"],["payout_equal","払戻均等（オッズ反比例）"],["group","本線/穴で単価を変える"]].map(([k,v]) => `<option value="${k}" ${stk.method === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <div class="two">${num("stk_power", "確率比例の指数", stk.prob_power ?? 1, 0.5)}${num("stk_max", "1点の上限（割合）", stk.max_share ?? 0.3, 0.05)}</div>
-      <div class="two">${num("stk_main", "本線1点（group）", stk.main_stake ?? 100, 100)}${num("stk_hole", "穴1点（group）", stk.hole_stake ?? 400, 100)}</div></div>
-    <p><button class="btn" id="save">保存（新しい設定版として記録）</button></p><p class="muted">変更は設定版として記録され、過去の予想には影響しません。</p>
-    <h2>データの書き出し</h2><div class="card"><p class="muted">採点済みの予想をCSVで保存します。分析を依頼するときはこのファイルをチャットに添付してください。</p>
-      <p><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=focused" download>絞り込み型のCSV</a> <a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=std" download>15点固定のCSV</a></p></div>`;
+      <div class="two">${num("stk_main", "本線1点（group）", stk.main_stake ?? 100, 100)}${num("stk_hole", "穴1点（group）", stk.hole_stake ?? 400, 100)}</div></div></details>
+    <p><button class="btn" id="save" style="width:100%">保存（新しい設定版として記録）</button></p><p class="muted">変更は設定版として記録され、過去の予想には影響しません。</p>
+    <details class="sec" open><summary>データの書き出し</summary><div class="card"><p class="muted">採点済みの予想をCSVで保存します。分析を依頼するときはこのファイルをチャットに添付してください。</p>
+      <p><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=focused" download>絞り込み型のCSV</a> <a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=std" download>15点固定のCSV</a></p></div></details>`;
   $("#save").onclick = async () => {
     const g = id => +$("#" + id).value;
     const staking = { method: $("#stk_method").value, prob_power: g("stk_power"), max_share: g("stk_max"), main_stake: g("stk_main"), hole_stake: g("stk_hole"), min_per_point: 100, unit: 100 };
