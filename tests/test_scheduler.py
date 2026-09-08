@@ -24,6 +24,8 @@ def test_tick_schedule(monkeypatch):
     assert s.calls == []                       # 深夜（バックアップ時刻前）は何もしない
     t[0] = datetime(2026, 9, 2, 2, 31); s.tick()
     assert [c[0] for c in s.calls] == ["backup"]
+    t[0] = datetime(2026, 9, 2, 2, 46); s.tick()
+    assert [c[0] for c in s.calls][-1] == "research"      # 02:45 買い方の自動研究
     t[0] = datetime(2026, 9, 2, 6, 11); s.tick()
     assert [c[0] for c in s.calls][-1] == "yesterday_final"
     t[0] = datetime(2026, 9, 2, 7, 31); s.tick()
