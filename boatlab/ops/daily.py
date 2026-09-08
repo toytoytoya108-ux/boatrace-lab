@@ -7,6 +7,7 @@ score          : 結果が揃った予想を採点（created_at < post_time_at_p
 train          : 前日までのデータで Predictor を学習して保存・登録
 """
 from __future__ import annotations
+import json
 
 import logging
 from datetime import date, datetime, timedelta
@@ -61,8 +62,73 @@ def ingest_today(fetcher: Fetcher, d: date | None = None) -> dict:
     if not keep:
         return {"date": str(d), "stale_file": True}
     with session_scope() as s:
+        dropped = _drop_unchanged_snapshots(s, bundle)
         counts = write_bundle(s, bundle)
-    return {"date": str(d), **counts}
+    _prune_today_raw(fetcher, d)
+    return {"date": str(d), **counts, "unchanged_dropped": dropped}
+
+
+_PREVIEW_KEYS = ("course", "st_exh", "weight", "weight_adj", "exhibition_time", "tilt", "propeller", "parts")
+_COND_KEYS = ("weather", "temp_c", "water_temp_c", "wind_dir", "wind_speed_m", "wave_cm")
+
+
+def _drop_unchanged_snapshots(s, bundle) -> int:
+    """直前情報・気象が前回取得と同じ内容なら追記しない（数分おきの再取込でスナップショットが膨らむのを防ぐ）。
+    値が変わったときだけ新しい行が入るので「締切前の最新値」は従来どおり得られる。"""
+    from sqlalchemy import text
+    ids = sorted({p.race_id for p in bundle.previews} | {c.race_id for c in bundle.conditions})
+    if not ids:
+        return 0
+    idl = ",".join(str(i) for i in ids)
+    latest_p = {}
+    for row in s.execute(text(f"""
+        SELECT race_id, lane, source, {", ".join(_PREVIEW_KEYS)} FROM (
+          SELECT p.*, ROW_NUMBER() OVER (PARTITION BY race_id, lane, source ORDER BY fetched_at DESC, id DESC) AS rn
+          FROM preview_snapshots p WHERE race_id IN ({idl})) WHERE rn = 1""")).mappings():
+        latest_p[(row["race_id"], row["lane"], row["source"])] = tuple(_norm(row[k]) for k in _PREVIEW_KEYS)
+    latest_c = {}
+    for row in s.execute(text(f"""
+        SELECT race_id, source, phase, {", ".join(_COND_KEYS)} FROM (
+          SELECT c.*, ROW_NUMBER() OVER (PARTITION BY race_id, source, phase ORDER BY observed_at DESC, id DESC) AS rn
+          FROM race_conditions c WHERE race_id IN ({idl})) WHERE rn = 1""")).mappings():
+        latest_c[(row["race_id"], row["source"], row["phase"])] = tuple(_norm(row[k]) for k in _COND_KEYS)
+    n0 = len(bundle.previews) + len(bundle.conditions)
+    bundle.previews = [p for p in bundle.previews
+                       if latest_p.get((p.race_id, p.lane, p.source)) != tuple(_norm(getattr(p, k, None)) for k in _PREVIEW_KEYS)]
+    bundle.conditions = [c for c in bundle.conditions
+                         if latest_c.get((c.race_id, c.source, c.phase)) != tuple(_norm(getattr(c, k, None)) for k in _COND_KEYS)]
+    return n0 - len(bundle.previews) - len(bundle.conditions)
+
+
+def _norm(v):
+    if v is None:
+        return None
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, ensure_ascii=False, sort_keys=True)
+    if isinstance(v, str):
+        try:
+            return json.dumps(json.loads(v), ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return v
+    if isinstance(v, float):
+        return round(v, 4)
+    return v
+
+
+def _prune_today_raw(fetcher: Fetcher, d: date, keep: int = 3) -> None:
+    """today.json の原本は数分おきに保存されるので、各日の最新 keep 件だけ残す（1日で数百MBに膨らむため）。"""
+    try:
+        base = fetcher.raw_path("openapi_api", "today")
+        if not base.exists():
+            return
+        by_day: dict[str, list] = {}
+        for f in base.glob("*.json"):
+            by_day.setdefault(f.name.split("_")[0], []).append(f)
+        for files in by_day.values():
+            for f in sorted(files)[:-keep]:
+                f.unlink(missing_ok=True)
+    except Exception as e:  # 掃除の失敗で取込を止めない
+        log.warning("raw prune failed: %r", e)
 
 
 # ---------------------------------------------------------------- predict
@@ -127,7 +193,7 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
         return {"predicted": 0}
     ids = [r.id for r in targets]
     # 履歴（前日まで）と対象（当日）。hist_cache はスケジューラが日単位で使い回す
-    hist = hist_cache if hist_cache is not None else load_history(d - timedelta(days=3 * 365), d - timedelta(days=1))
+    hist = hist_cache if hist_cache is not None else load_history(d - timedelta(days=3 * 365), d - timedelta(days=1), slim=True)
     today = load_history(d, d)
     tf = HistoryFrames(today.races[today.races["id"].isin(ids)], today.entries[today.entries["race_id"].isin(ids)],
                        today.previews[today.previews["race_id"].isin(ids)] if len(today.previews) else today.previews,

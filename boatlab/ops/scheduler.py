@@ -82,7 +82,7 @@ class Scheduler:
     def _hist(self, d: date) -> HistoryFrames:
         if self.hist_cache is None or self.hist_cache_day != d:
             log.info("loading 3y history cache for %s", d)
-            self.hist_cache = load_history(d - timedelta(days=3 * 365), d - timedelta(days=1))
+            self.hist_cache = load_history(d - timedelta(days=3 * 365), d - timedelta(days=1), slim=True)
             self.hist_cache_day = d
         return self.hist_cache
 
