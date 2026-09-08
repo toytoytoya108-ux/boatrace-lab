@@ -121,5 +121,13 @@ def activate(version: str = typer.Option(...)):
     typer.echo(f"active: {version}")
 
 
+@app.command()
+def research():
+    """買い方の自動研究を今すぐ実行（夜間ジョブと同じ処理）。"""
+    from boatlab.research.strategy import OUT_FILE, run_research
+    rep = run_research()
+    typer.echo(f"written: {OUT_FILE}  bt={rep['n_bt']} live={rep['n_live']} rolling_roi={rep['rolling']['summary'].get('roi')}")
+
+
 if __name__ == "__main__":
     app()

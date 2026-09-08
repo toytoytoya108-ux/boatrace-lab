@@ -10,6 +10,7 @@
   06:10       前日の turnmark（最終オッズ・返還）取込 → 再採点
   01:15（毎月1日） active モデルをパラメータ据え置きで再学習（docs/04 §13-5）
   02:30       SQLite バックアップ（7世代）
+  02:45       買い方の自動研究（固定候補の評価。設定は変えない）
 
 環境変数: BOATLAB_DISABLE_OFFICIAL_ODDS=1 で公式オッズ取得を止める（推定オッズで運用）。
 """
@@ -196,6 +197,13 @@ class Scheduler:
         self.predictor = None  # 次回予想時に再読込
         return {"retrained": mv.version, "until": str(until)}
 
+    def job_research(self):
+        """買い方の自動研究（固定候補の評価・順送り検証）。結果は data/research/strategy_research.json。設定は変えない。"""
+        from boatlab.research.strategy import run_research
+        rep = run_research()
+        return {"n_bt": rep["n_bt"], "n_live": rep["n_live"], "rolling_roi": rep["rolling"]["summary"].get("roi"),
+                "flagged": sum(1 for r in rep["rows"] if r.get("flag"))}
+
     def job_backup(self):
         if not DATABASE_URL.startswith("sqlite"):
             return {"skipped": "not sqlite"}
@@ -230,6 +238,8 @@ class Scheduler:
             self._job("monthly_retrain", self.job_monthly_retrain)
         if self._due("backup", hm >= "02:30" and self.last_run.get("backup", t - timedelta(days=1)).date() < t.date(), 0):
             self._job("backup", self.job_backup)
+        if self._due("research", hm >= "02:45" and self.last_run.get("research", t - timedelta(days=1)).date() < t.date(), 0):
+            self._job("research", self.job_research)
 
     def _urgent(self) -> bool:
         """締切12分前以内のレースがあるときは1分間隔で回す。"""

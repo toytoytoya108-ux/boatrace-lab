@@ -8,6 +8,7 @@ COPY pyproject.toml README.md ./
 COPY boatlab ./boatlab
 COPY web ./web
 COPY scripts ./scripts
+COPY research_data ./research_data
 RUN pip install --no-cache-dir -e .
 
 ENV BOATLAB_ROOT=/app \

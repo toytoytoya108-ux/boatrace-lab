@@ -34,7 +34,7 @@ h2{font-size:15px;margin:18px 0 6px}h3{font-size:14px;margin:12px 0 4px;color:va
 .bar{height:6px;background:var(--sf2);border-radius:3px;overflow:hidden}.bar i{display:block;height:100%;background:var(--mode)}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}.muted{color:var(--ink2);font-size:12px}.right{text-align:right}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:left}th{font-size:11px;color:var(--ink2);font-weight:600}td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
-.tbl{overflow-x:auto}
+.tbl{overflow-x:auto}table.wide td:first-child,table.wide th:first-child{white-space:nowrap}
 .sel{display:grid;grid-template-columns:1fr 1fr;gap:6px}.sel .pt{background:var(--sf2);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:14px;display:flex;justify-content:space-between;flex-wrap:wrap}.sel .pt.hole{border-left:3px solid var(--buoy)}.sel .pt.won{outline:2px solid var(--ok)}
 .pt small{color:var(--ink2);font-size:11px}
 .form{font-family:var(--mono);font-size:15px}.form .fl{display:grid;grid-template-columns:auto auto 1fr auto;gap:0 10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.form .fl:last-child{border:0}
@@ -325,9 +325,27 @@ async function renderStats(m) {
     <div class="card tbl">${bd.length ? `<table><tr>${cols.map(c => `<th class="${typeof bd[0][c] === "number" ? "n" : ""}">${c}</th>`).join("")}</tr>${bd.map(r => `<tr>${cols.map(c => `<td class="${typeof r[c] === "number" ? "n" : ""}">${typeof r[c] === "number" ? (c.includes("rate") || c.includes("roi") ? fmtP(r[c]) : fmtN(r[c])) : (r[c] ?? "")}</td>`).join("")}</tr>`).join("")}</table>` : '<p class="muted">データなし</p>'}</div>
     <h2>信頼度の校正（予測 vs 実績）</h2><div class="card tbl"><table><tr><th>信頼度帯</th><th class="n">n</th><th class="n">予測平均</th><th class="n">実績的中率</th></tr>${cal.map(r => `<tr><td>${r.band}</td><td class="n">${r.n}</td><td class="n">${fmtP(r.conf_mean)}</td><td class="n">${fmtP(r.hit_rate)}</td></tr>`).join("")}</table></div>`;
 }
+function researchSection(rs) {
+  const rep = rs.report;
+  const cell = x => x && x.n ? `<td class="n">${x.n}</td><td class="n">${fmtP(x.hit)}</td><td class="n"><b>${fmtP(x.roi)}</b><br><small class="muted">${x.ci ? x.ci.map(v => (v*100).toFixed(0)).join("–") : ""}</small></td>` : `<td class="n">–</td><td class="n">–</td><td class="n">–</td>`;
+  const head = `<h2>買い方の研究（自動）</h2>`;
+  const runBtn = `<p><button class="btn ghost" ${rs.running ? "disabled" : ""} onclick="api('/api/research/run',{method:'POST'}).then(()=>{alert('研究を開始しました。数分後に開き直してください');render()})">${rs.running ? "実行中…（" + tm(rs.started_at).slice(6) + "〜）" : "今すぐ実行"}</button>${rs.error ? ` <span class="pill warn">前回エラー: ${rs.error}</span>` : ""}</p>`;
+  if (!rep) return head + `<div class="card muted">まだ結果がありません。毎日 02:45 に自動実行されます。${runBtn}</div>`;
+  const roll = rep.rolling.summary, picks = rep.rolling.picks || [];
+  const flagged = rep.rows.filter(r => r.flag);
+  return head + `<div class="card"><p class="muted">最終実行 ${tm(rep.generated_at)} · 候補 ${rep.grid_size}通り（固定） · バックテスト ${fmtN(rep.n_bt)}R（Model ${rep.model_bt}、実オッズ） · 実運用 ${fmtN(rep.n_live)}R</p>
+    <p><b>順送り検証</b>：毎月「その月より前で最も堅かった候補」に従い続けた場合 → ${roll.n ? `${roll.n}R・的中 ${fmtP(roll.hit)}・回収率 <b>${fmtP(roll.roi)}</b>（95%区間 ${roll.ci.map(fmtP).join("〜")}）・損益 ${fmtY(roll.pnl)}` : "データ不足"}</p>
+    <p class="muted">この数字が「自動で買い方を選び続けたときの正直な成績」です。100%を超えない限り、どの候補も控除率の壁は越えていません。</p>
+    ${flagged.length ? `<p><b>候補</b>（現在の設定より確認期間${flagged.some(r => r.flag === "候補") ? "と実運用の両方" : ""}で回収率が高いもの）：${flagged.slice(0, 3).map(r => `${r.label}（${r.flag}）`).join("、")}。採用する場合は設定タブで値を変えてください。自動では変えません。</p>` : `<p><b>候補なし</b>：現在の設定を上回る候補は見つかっていません。</p>`}
+    <details><summary>全候補の成績を見る</summary><div class="tbl"><table class="wide"><tr><th>候補</th><th class="n" colspan="3">探索 1〜5月<br><small>N／的中／回収率</small></th><th class="n" colspan="3">確認 6〜8月</th><th class="n" colspan="3">実運用</th></tr>
+      ${rep.rows.map(r => `<tr style="${r.is_current ? "background:var(--modebg)" : ""}"><td>${r.label}${r.is_current ? " <span class='pill buy'>現在</span>" : ""}${r.flag ? ` <span class='pill warn'>${r.flag}</span>` : ""}</td>${cell(r.bt_explore)}${cell(r.bt_confirm)}${cell(r.live)}</tr>`).join("")}</table></div>
+      <p class="muted">探索期間で良く見えても確認期間で落ちる候補は「たまたま」です。確認期間と実運用の両方で現在設定を上回るものだけ「候補」と表示します（実運用が100R未満の間は「仮候補」）。</p></details>
+    <details><summary>順送りの月ごとの選択</summary><div class="tbl"><table><tr><th>月</th><th>選んだ候補</th><th class="n">選定時の回収率</th><th class="n">その月 N</th><th class="n">その月 回収率</th></tr>${picks.map(p => `<tr><td>${p.month}</td><td>${p.picked}</td><td class="n">${fmtP(p.prev_roi)}</td><td class="n">${p.n}</td><td class="n">${fmtP(p.roi)}</td></tr>`).join("")}</table></div></details>
+    ${runBtn}</div>`;
+}
 async function renderModels(m) {
-  const [ms, bt] = await Promise.all([api("/api/models"), api("/api/backtests")]);
-  m.innerHTML = `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row" style="cursor:default"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
+  const [ms, bt, rs] = await Promise.all([api("/api/models"), api("/api/backtests"), api("/api/research")]);
+  m.innerHTML = researchSection(rs) + `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row" style="cursor:default"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
     <h2>バックテスト</h2>${Object.entries(bt).map(([k, v]) => `<div class="card"><details><summary>${k}</summary><pre class="md">${v.replace(/</g, "&lt;")}</pre></details></div>`).join("") || '<p class="muted">レポートなし</p>'}`;
 }
 // ---------------- 設定

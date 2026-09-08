@@ -313,6 +313,40 @@ def put_settings(body: dict, _=Depends(require_auth)):
     return _settings()
 
 
+# ---------------------------------------------------------------- 買い方の自動研究
+_research_lock = __import__("threading").Lock()
+_research_state = {"running": False, "started_at": None, "error": None}
+
+
+def _run_research_bg():
+    from boatlab.research.strategy import run_research
+    try:
+        run_research()
+        _research_state["error"] = None
+    except Exception as e:  # 画面に出す
+        _research_state["error"] = repr(e)[:300]
+    finally:
+        _research_state["running"] = False
+
+
+@app.get("/api/research")
+def research(_=Depends(require_auth)):
+    from boatlab.research.strategy import GRID, load_report
+    rep = load_report()
+    return {"report": rep, "grid_size": len(GRID), **_research_state}
+
+
+@app.post("/api/research/run")
+def research_run(_=Depends(require_auth)):
+    import threading
+    with _research_lock:
+        if _research_state["running"]:
+            return {"started": False, **_research_state}
+        _research_state.update(running=True, started_at=now_jst().isoformat(timespec="minutes"), error=None)
+        threading.Thread(target=_run_research_bg, daemon=True).start()
+    return {"started": True, **_research_state}
+
+
 @app.get("/api/backtests")
 def backtests(_=Depends(require_auth)):
     root = Path("reports/backtest")
