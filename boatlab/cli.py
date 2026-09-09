@@ -129,5 +129,41 @@ def research():
     typer.echo(f"written: {OUT_FILE}  bt={rep['n_bt']} live={rep['n_live']} rolling_roi={rep['rolling']['summary'].get('roi')}")
 
 
+@app.command("check-oddstf")
+def check_oddstf(stadium: int = typer.Option(..., "--stadium"), race: int = typer.Option(..., "--race"),
+                 day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日）")):
+    """公式の単勝・複勝ページを1回だけ取得して、読めているか確認する（本番サーバーで実行）。
+
+    パーサはサンドボックスから公式サイトに接続できないため実ページで未検証。
+    開催中の場・レースを指定して、6艇分のオッズが出れば正常。
+    """
+    from datetime import date as _date
+
+    from boatlab.ingest.history import make_fetcher
+    from boatlab.ingest.official_web import fetch_oddstf
+    from boatlab.util import now_jst
+    d = _date.fromisoformat(day) if day else now_jst().date()
+    recs = fetch_oddstf(make_fetcher(), d, stadium, race)
+    if not recs:
+        typer.echo("読めませんでした（ページ構造が想定と違う可能性）。data/raw/official_web/oddstf/ に生HTMLが残ります。")
+        raise typer.Exit(1)
+    for r in recs:
+        typer.echo(f"{r.bet_type}: {r.odds}")
+    typer.echo("OK: 6艇そろって読めています。")
+
+
+@app.command("poolgap")
+def poolgap_report():
+    """単勝・複勝プールの歪みの観測状況を表示する。"""
+    from boatlab.research.poolgap import report
+    rep = report()
+    typer.echo(f"記録 {rep['n']} 件（採点済み {rep.get('n_scored', 0)}）")
+    for x in rep.get("summary", []):
+        typer.echo(f"  {x['bet_type']}/{x['stage']}: n={x['n']} 的中={x['hit']} 回収={x['roi']} 損益={x['pnl']}円")
+    if rep.get("drift"):
+        d = rep["drift"]
+        typer.echo(f"  締切前→確定のオッズ変化: 中央値{d['median']*100:.1f}% / ±10%以内 {d['within10']*100:.0f}%（{d['n']}件）")
+
+
 if __name__ == "__main__":
     app()

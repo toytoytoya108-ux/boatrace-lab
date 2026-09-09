@@ -30,7 +30,8 @@ from boatlab.model.staking import StakingParams
 from boatlab.model.trifecta import PERM_LABELS, combo_index
 from boatlab.store.db import session_scope
 from boatlab.store.models import (
-    ModelVersion, OddsSnapshot, Prediction, PredictionSelection, Race, Result, Scoring, SettingsVersion,
+    ModelVersion, OddsSnapshot, PoolGapPick, Prediction, PredictionSelection, Race, Result, Scoring,
+    SettingsVersion,
 )
 from boatlab.store.writer import write_bundle
 from boatlab.util import now_jst
@@ -331,3 +332,34 @@ def train_and_register(version: str, until: date, selection: SelectionParams, de
         mv.status = status
         mv.params = {k: v for k, v in pr.params.items()}
     return pr
+
+
+# ---------------------------------------------------------------- 単勝・複勝プールの歪み（観測）
+def poolgap_from_settings(row: SettingsVersion) -> "PoolGapParams":
+    """設定の extra.poolgap。無ければ既定値（2026年1〜8月の確定オッズ検証で決めた値）。"""
+    from boatlab.research.poolgap import PoolGapParams
+    d = (row.extra or {}).get("poolgap") or {}
+    return PoolGapParams(**{k: v for k, v in d.items() if k in PoolGapParams().__dict__})
+
+
+def record_pool_gap(odds3t: dict, win_odds: dict | None, place_odds: dict | None,
+                    race_id: int, stage: str, minutes_before: float | None) -> int:
+    """締切前オッズで見えた候補を追記する（購入はしない・仮想の記録のみ）。戻り値は追記件数。"""
+    from sqlalchemy.exc import IntegrityError
+
+    from boatlab.research.poolgap import PARAMS_VERSION, find_picks
+    with session_scope() as s:
+        prm = poolgap_from_settings(_settings_row(s))
+    picks = find_picks(odds3t, win_odds, place_odds, prm)
+    n = 0
+    for p in picks:
+        try:
+            with session_scope() as s:
+                s.add(PoolGapPick(race_id=race_id, bet_type=p["bet_type"], lane=p["lane"], stage=stage,
+                                  created_at=now_jst(), minutes_before=minutes_before, odds_seen=p["odds"],
+                                  p_pool=p["p_pool"], p_ref=p["p_ref"], ratio=p["ratio"], stake=prm.stake,
+                                  params_version=PARAMS_VERSION, params=prm.to_dict()))
+            n += 1
+        except IntegrityError:
+            pass          # 同じレース・券種・艇・段階は1回だけ（再実行しても増えない）
+    return n

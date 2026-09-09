@@ -35,6 +35,7 @@ h2{font-size:15px;margin:18px 0 6px}h3{font-size:14px;margin:12px 0 4px;color:va
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}.muted{color:var(--ink2);font-size:12px}.right{text-align:right}
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:left}th{font-size:11px;color:var(--ink2);font-weight:600}td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .tbl{overflow-x:auto}table.wide td:first-child,table.wide th:first-child{white-space:nowrap}
+#pgt td,#pgt th{white-space:nowrap}
 .sel{display:grid;grid-template-columns:1fr 1fr;gap:6px}.sel .pt{background:var(--sf2);border-radius:8px;padding:8px 10px;font-family:var(--mono);font-size:14px;display:flex;justify-content:space-between;flex-wrap:wrap}.sel .pt.hole{border-left:3px solid var(--buoy)}.sel .pt.won{outline:2px solid var(--ok)}
 .pt small{color:var(--ink2);font-size:11px}
 .form{font-family:var(--mono);font-size:15px}.form .fl{display:grid;grid-template-columns:auto auto 1fr auto;gap:0 10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.form .fl:last-child{border:0}
@@ -325,6 +326,33 @@ async function renderStats(m) {
     <div class="card tbl">${bd.length ? `<table><tr>${cols.map(c => `<th class="${typeof bd[0][c] === "number" ? "n" : ""}">${c}</th>`).join("")}</tr>${bd.map(r => `<tr>${cols.map(c => `<td class="${typeof r[c] === "number" ? "n" : ""}">${typeof r[c] === "number" ? (c.includes("rate") || c.includes("roi") ? fmtP(r[c]) : fmtN(r[c])) : (r[c] ?? "")}</td>`).join("")}</tr>`).join("")}</table>` : '<p class="muted">データなし</p>'}</div>
     <h2>信頼度の校正（予測 vs 実績）</h2><div class="card tbl"><table><tr><th>信頼度帯</th><th class="n">n</th><th class="n">予測平均</th><th class="n">実績的中率</th></tr>${cal.map(r => `<tr><td>${r.band}</td><td class="n">${r.n}</td><td class="n">${fmtP(r.conf_mean)}</td><td class="n">${fmtP(r.hit_rate)}</td></tr>`).join("")}</table></div>`;
 }
+const BT_NAME = { win: "単勝", place: "複勝" };
+const STG_NAME = { pre: "締切6〜12分前", late: "締切2〜4分前" };
+function poolgapSection(pg) {
+  const head = `<h2>単勝・複勝プールの歪み <span class="pill">観測中</span></h2>`;
+  const note = `<p class="muted" style="margin-top:-4px">3連単オッズが示す確率と、単勝・複勝オッズが示す確率のズレを記録しています。
+    <b>実際の購入はしません。</b>過去の確定オッズでは単勝184%・複勝142%でしたが、締切前オッズで同じズレが見えるかは未検証です。</p>`;
+  if (!pg || !pg.n) return head + note + `<div class="card muted">まだ記録がありません。締切前オッズの取得は次の開催から始まります。</div>`;
+  const d = pg.drift;
+  const gate = d && d.n >= 200 ? (d.within10 >= 0.5 ? "ok" : "ng") : "wait";
+  const driftCard = `<div class="card"><h3 style="margin:0 0 6px">判定の要：締切前オッズは確定まで残るか</h3>
+    ${d ? `<p style="margin:4px 0"><b style="font-size:20px">${fmtP(d.within10)}</b> のオッズが確定まで±10%以内（${fmtN(d.n)}件）<br>
+      <small class="muted">中央値 ${(d.median*100).toFixed(1)}% / 下位10% ${(d.p10*100).toFixed(0)}% / 上位10% ${(d.p90*100).toFixed(0)}%</small></p>
+      <p class="muted" style="margin:4px 0">${gate === "ok" ? "締切前のオッズはおおむね確定まで残っています。" : gate === "ng" ? "締切前と確定が大きくずれています。この筋道は成立しない可能性が高いです。" : "判定にはあと " + fmtN(200 - d.n) + " 件ほど必要です。"}</p>`
+      : `<p class="muted">前日分の確定オッズを取り込むと出ます（翌朝06:10）。</p>`}</div>`;
+  const rows = (pg.summary || []).map(x => `<tr><td>${BT_NAME[x.bet_type] || x.bet_type}</td><td>${STG_NAME[x.stage] || x.stage}</td>
+    <td class="n">${fmtN(x.n)}</td><td class="n">${fmtP(x.hit)}</td><td class="n"><b>${fmtP(x.roi)}</b></td><td class="n">${fmtY(x.pnl)}</td></tr>`).join("");
+  const sum = rows ? `<div class="card tbl"><table class="wide"><thead><tr><th>券種</th><th>時点</th><th>本数</th><th>的中</th><th>回収率</th><th>仮想損益</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted" style="margin:8px 0 0">1点${fmtN(pg.params && pg.params.stake)}円で買ったと仮定した場合の数字です（実際には買っていません）。</p></div>` : "";
+  const today = (pg.today || []).length ? `<details class="sec"><summary>${pg.day} の候補 ${pg.today.length}件</summary><div class="tbl"><table class="wide" id="pgt">
+    <thead><tr><th>レース</th><th>買い目</th><th>時点</th><th>オッズ</th><th>ズレ</th><th>確定</th><th>結果</th></tr></thead><tbody>
+    ${pg.today.map(x => `<tr><td>${x.stadium} ${x.race_no}R</td><td>${BT_NAME[x.bet_type]} ${x.lane}号艇</td>
+      <td>${x.stage === "late" ? "直前" : "前"}</td><td class="n">${x.odds_seen}</td><td class="n">×${(+x.ratio).toFixed(2)}</td>
+      <td class="n">${x.odds_final == null ? "–" : x.odds_final}</td>
+      <td class="n">${x.ret == null ? "–" : (x.ret > 0 ? "的中 " + fmtN(x.ret) + "円" : "外れ")}</td></tr>`).join("")}</tbody></table></div></details>` : "";
+  return head + note + driftCard + sum + today;
+}
+
 function researchSection(rs) {
   const rep = rs.report;
   const cell = x => x && x.n ? `<td class="n">${x.n}</td><td class="n">${fmtP(x.hit)}</td><td class="n"><b>${fmtP(x.roi)}</b><br><small class="muted">${x.ci ? x.ci.map(v => (v*100).toFixed(0)).join("–") : ""}</small></td>` : `<td class="n">–</td><td class="n">–</td><td class="n">–</td>`;
@@ -344,14 +372,15 @@ function researchSection(rs) {
     ${runBtn}</div>`;
 }
 async function renderModels(m) {
-  const [ms, bt, rs] = await Promise.all([api("/api/models"), api("/api/backtests"), api("/api/research")]);
-  m.innerHTML = researchSection(rs) + `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row" style="cursor:default"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
+  const [ms, bt, rs, pg] = await Promise.all([api("/api/models"), api("/api/backtests"), api("/api/research"), api("/api/poolgap")]);
+  m.innerHTML = poolgapSection(pg) + researchSection(rs) + `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row" style="cursor:default"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
     <h2>バックテスト</h2>${Object.entries(bt).map(([k, v]) => `<div class="card"><details><summary>${k}</summary><pre class="md">${v.replace(/</g, "&lt;")}</pre></details></div>`).join("") || '<p class="muted">レポートなし</p>'}`;
 }
 // ---------------- 設定
 async function renderSettings(m) {
   const s = await api("/api/settings");
   const rd = s.readiness, ex = s.extra || {};
+  const pg = Object.assign({ win_ratio_min: 2.0, place_ratio_min: 1.5, odds_lo: 1.1, odds_hi: 20, stake: 100, enabled: true }, ex.poolgap || {});
   const stk = ex.staking || { method: "uniform" };
   const fc = Object.assign({ enabled: true, s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, cap: 1000, budget: 3000, power: 1.0, completeness_min: 0.6, require_real_odds: false }, ex.focused || {});
   const rf = Object.assign({ min_races: 500, roi: 1.0, roi_ci_lower: 0.95, recent_n: 100, recent_roi: 1.0 }, ex.readiness_focused || {});
@@ -373,6 +402,13 @@ async function renderSettings(m) {
       <label>方式<select id="stk_method">${[["uniform","均等（200円×15点）"],["prob","確率比例（本線上位に厚く）"],["payout_equal","払戻均等（オッズ反比例）"],["group","本線/穴で単価を変える"]].map(([k,v]) => `<option value="${k}" ${stk.method === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <div class="two">${num("stk_power", "確率比例の指数", stk.prob_power ?? 1, 0.5)}${num("stk_max", "1点の上限（割合）", stk.max_share ?? 0.3, 0.05)}</div>
       <div class="two">${num("stk_main", "本線1点（group）", stk.main_stake ?? 100, 100)}${num("stk_hole", "穴1点（group）", stk.hole_stake ?? 400, 100)}</div></div></details>
+    <details class="sec"><summary>単勝・複勝プールの歪み <span class="muted">観測のみ</span></summary><div class="card">
+      <label>記録<select id="pg_enabled"><option value="1" ${pg.enabled ? "selected" : ""}>締切前オッズを取得して記録する</option><option value="0" ${!pg.enabled ? "selected" : ""}>停止</option></select></label>
+      <div class="two">${num("pg_wr", "単勝のズレ倍率（下限）", pg.win_ratio_min, 0.1)}${num("pg_pr", "複勝のズレ倍率（下限）", pg.place_ratio_min, 0.1)}</div>
+      <div class="two">${num("pg_olo", "オッズ下限（倍）", pg.odds_lo, 0.1)}${num("pg_ohi", "オッズ上限（倍）", pg.odds_hi, 5)}</div>
+      ${num("pg_stake", "仮想の1点あたり（円）", pg.stake, 100)}
+      <p class="muted"><b>この設定で実際に購入することはありません。</b>締切前オッズで見えた候補を記録し、確定オッズ・結果と突き合わせて検証するだけです。
+        2026年1〜8月の確定オッズでは単勝×2.0で回収率184%、複勝×1.5で142%でしたが、締切前オッズで同じズレが見えるかは未検証です。結果はモデルタブに出ます。</p></div></details>
     <p><button class="btn" id="save" style="width:100%">保存（新しい設定版として記録）</button></p><p class="muted">変更は設定版として記録され、過去の予想には影響しません。</p>
     <details class="sec" open><summary>データの書き出し</summary><div class="card"><p class="muted">採点済みの予想をCSVで保存します。分析を依頼するときはこのファイルをチャットに添付してください。</p>
       <p><a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=focused" download>絞り込み型のCSV</a> <a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px" href="/api/export.csv?mode=std" download>15点固定のCSV</a></p></div></details>`;
@@ -381,7 +417,8 @@ async function renderSettings(m) {
     const staking = { method: $("#stk_method").value, prob_power: g("stk_power"), max_share: g("stk_max"), main_stake: g("stk_main"), hole_stake: g("stk_hole"), min_per_point: 100, unit: 100 };
     const focused = { enabled: $("#fc_enabled").value === "1", s15_min: g("fc_s15"), ev_min: g("fc_ev"), odds_lo: g("fc_olo"), odds_hi: g("fc_ohi"), max_points: g("fc_max"), cap: g("fc_cap"), budget: g("fc_budget"), power: g("fc_power"), completeness_min: fc.completeness_min, require_real_odds: $("#fc_real").value === "1", pool: 15, beta: 0 };
     const readiness_focused = { min_races: g("rf_min_races"), roi: g("rf_roi"), roi_ci_lower: g("rf_roi_ci_lower"), recent_n: g("rf_recent_n"), recent_roi: g("rf_recent_roi") };
-    const body = { confidence_min: g("cmin"), ev_min: g("emin"), completeness_min: g("cpl"), readiness: Object.fromEntries(Object.keys(rd).map(k => [k, g("rd_" + k)])), extra: Object.assign({}, ex, { staking, focused, readiness_focused }) };
+    const poolgap = { enabled: $("#pg_enabled").value === "1", win_ratio_min: g("pg_wr"), place_ratio_min: g("pg_pr"), odds_lo: g("pg_olo"), odds_hi: g("pg_ohi"), stake: g("pg_stake") };
+    const body = { confidence_min: g("cmin"), ev_min: g("emin"), completeness_min: g("cpl"), readiness: Object.fromEntries(Object.keys(rd).map(k => [k, g("rd_" + k)])), extra: Object.assign({}, ex, { staking, focused, readiness_focused, poolgap }) };
     await api("/api/settings", { method: "PUT", body: JSON.stringify(body) }); alert("保存しました"); render();
   };
 }

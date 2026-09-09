@@ -339,3 +339,27 @@ class JobRun(Base):
     ok: Mapped[bool | None] = mapped_column(Boolean)
     summary: Mapped[dict | None] = mapped_column(JSON)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class PoolGapPick(Base):
+    """単勝・複勝プールの歪みを拾う買い方の記録（追記専用・観測フェーズ）。
+
+    実際には購入しない。締切前オッズで見えた候補をそのまま残し、後から確定オッズ・結果と
+    突き合わせて「締切前に見えた歪みが本当に残るか」を検証するためのもの。
+    """
+    __tablename__ = "pool_gap_picks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("races.id"), index=True)
+    bet_type: Mapped[str] = mapped_column(String(8))    # win / place
+    lane: Mapped[int] = mapped_column(Integer)          # 1..6
+    stage: Mapped[str] = mapped_column(String(8))       # pre（締切6〜12分前） / late（同2〜4分前）
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    minutes_before: Mapped[float | None] = mapped_column(Float)
+    odds_seen: Mapped[float] = mapped_column(Float)     # そのとき見えていたオッズ
+    p_pool: Mapped[float] = mapped_column(Float)        # そのプールのオッズが示す確率
+    p_ref: Mapped[float] = mapped_column(Float)         # 3連単オッズが示す確率
+    ratio: Mapped[float] = mapped_column(Float)         # p_ref / p_pool
+    stake: Mapped[int] = mapped_column(Integer)         # 仮想の賭け金
+    params_version: Mapped[str] = mapped_column(String(16))
+    params: Mapped[dict | None] = mapped_column(JSON)
+    __table_args__ = (UniqueConstraint("race_id", "bet_type", "lane", "stage"),)

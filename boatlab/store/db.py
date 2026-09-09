@@ -67,6 +67,10 @@ SQLITE_TRIGGERS = [
     """CREATE TRIGGER IF NOT EXISTS predictions_created_at_guard BEFORE INSERT ON predictions
        WHEN abs(strftime('%s', NEW.created_at) - strftime('%s', 'now', '+9 hours')) > 60
        BEGIN SELECT RAISE(ABORT, 'predictions.created_at must be now()'); END;""",
+    """CREATE TRIGGER IF NOT EXISTS poolgap_no_update BEFORE UPDATE ON pool_gap_picks
+       BEGIN SELECT RAISE(ABORT, 'pool_gap_picks are append-only'); END;""",
+    """CREATE TRIGGER IF NOT EXISTS poolgap_no_delete BEFORE DELETE ON pool_gap_picks
+       BEGIN SELECT RAISE(ABORT, 'pool_gap_picks are append-only'); END;""",
     """CREATE TRIGGER IF NOT EXISTS selections_no_update BEFORE UPDATE ON prediction_selections
        BEGIN SELECT RAISE(ABORT, 'prediction_selections are append-only'); END;""",
     """CREATE TRIGGER IF NOT EXISTS selections_no_delete BEFORE DELETE ON prediction_selections
@@ -79,6 +83,9 @@ BEGIN RAISE EXCEPTION 'append-only table'; END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS predictions_immutable ON predictions;
 CREATE TRIGGER predictions_immutable BEFORE UPDATE OR DELETE ON predictions
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
+DROP TRIGGER IF EXISTS poolgap_immutable ON pool_gap_picks;
+CREATE TRIGGER poolgap_immutable BEFORE UPDATE OR DELETE ON pool_gap_picks
+FOR EACH ROW EXECUTE FUNCTION boatlab_append_only();
 DROP TRIGGER IF EXISTS selections_immutable ON prediction_selections;
 CREATE TRIGGER selections_immutable BEFORE UPDATE OR DELETE ON prediction_selections
   FOR EACH ROW EXECUTE FUNCTION forbid_change();

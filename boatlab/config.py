@@ -47,6 +47,7 @@ OPENAPI_API_DAY = "https://raw.githubusercontent.com/BoatraceOpenAPI/api/gh-page
 # --- 公式サイト（オッズのみ。低頻度） ---
 OFFICIAL_ODDS3T = "https://www.boatrace.jp/owpc/pc/race/odds3t?rno={rno}&jcd={jcd:02d}&hd={yyyymmdd}"
 OFFICIAL_BEFOREINFO = "https://www.boatrace.jp/owpc/pc/race/beforeinfo?rno={rno}&jcd={jcd:02d}&hd={yyyymmdd}"
+OFFICIAL_ODDSTF = "https://www.boatrace.jp/owpc/pc/race/oddstf?rno={rno}&jcd={jcd:02d}&hd={yyyymmdd}"
 
 SOURCES: dict[str, SourceSpec] = {
     "openapi_v3": SourceSpec("openapi_v3", OPENAPI_V3_BASE, min_interval_sec=0.4),

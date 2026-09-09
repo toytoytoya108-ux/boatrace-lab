@@ -347,6 +347,22 @@ def research_run(_=Depends(require_auth)):
     return {"started": True, **_research_state}
 
 
+@app.get("/api/poolgap")
+def poolgap(day: str | None = None, _=Depends(require_auth)):
+    """単勝・複勝プールの歪み（観測フェーズ）。実際の購入はしない・仮想の記録のみ。"""
+    from boatlab.research.poolgap import PoolGapParams, report
+    from boatlab.ops.daily import poolgap_from_settings
+    from boatlab.store.models import SettingsVersion
+    try:
+        rep = report(day)
+    except Exception as e:
+        rep = {"n": 0, "today": [], "summary": [], "drift": None, "error": repr(e)[:200]}
+    with session_scope() as s:
+        row = s.execute(select(SettingsVersion).order_by(SettingsVersion.id.desc())).scalars().first()
+        prm = poolgap_from_settings(row) if row else PoolGapParams()
+    return {**rep, "params": prm.to_dict()}
+
+
 @app.get("/api/backtests")
 def backtests(_=Depends(require_auth)):
     root = Path("reports/backtest")
