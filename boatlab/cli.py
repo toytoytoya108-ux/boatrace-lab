@@ -139,17 +139,25 @@ def check_oddstf(stadium: int = typer.Option(..., "--stadium"), race: int = type
     """
     from datetime import date as _date
 
+    from boatlab.config import OFFICIAL_ODDSTF
     from boatlab.ingest.history import make_fetcher
-    from boatlab.ingest.official_web import fetch_oddstf
+    from boatlab.ingest.official_web import digest_oddstf, fetch_oddstf
     from boatlab.util import now_jst
     d = _date.fromisoformat(day) if day else now_jst().date()
-    recs = fetch_oddstf(make_fetcher(), d, stadium, race)
-    if not recs:
-        typer.echo("読めませんでした（ページ構造が想定と違う可能性）。data/raw/official_web/oddstf/ に生HTMLが残ります。")
-        raise typer.Exit(1)
+    f = make_fetcher()
+    recs = fetch_oddstf(f, d, stadium, race)
     for r in recs:
         typer.echo(f"{r.bet_type}: {r.odds}")
-    typer.echo("OK: 6艇そろって読めています。")
+    if recs and any(r.bet_type == "place" for r in recs):
+        typer.echo("OK: 単勝・複勝とも6艇そろって読めています。")
+        return
+    # 失敗（または複勝だけ取れない）ときは構造の要約を出す。これをそのまま貼れば直せる。
+    url = OFFICIAL_ODDSTF.format(rno=race, jcd=stadium, yyyymmdd=d.strftime("%Y%m%d"))
+    res = f.fetch("official_web", url, f"oddstf/{d:%Y%m%d}/{stadium:02d}_{race:02d}_debug.html", use_cache=False)
+    typer.echo("---- 構造の要約（このままチャットに貼ってください）----")
+    typer.echo(digest_oddstf(res.content.decode("utf-8", errors="replace")))
+    if not recs:
+        raise typer.Exit(1)
 
 
 @app.command("poolgap")

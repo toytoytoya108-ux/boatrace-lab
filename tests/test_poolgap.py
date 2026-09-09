@@ -17,6 +17,31 @@ def _page(win, place):
     return WIN_HTML.format(w, p)
 
 
+NAV = '<ul class="tab3"><li><a href="/oddstf">単勝・複勝</a></li><li><a href="/odds2tf">2連単</a></li><li><a href="/odds3t">3連単</a></li></ul>'
+
+
+def test_parse_oddstf_with_nav_before_tables():
+    """実ページには先頭に「単勝・複勝」等のタブがある。見出しの位置で切ってはいけない。"""
+    win = [1.2, 8.4, 5.5, 11.0, 30.2, 45.0]
+    place = [(1.0, 1.1), (2.2, 2.8), (1.9, 2.3), (3.0, 3.6), (6.0, 7.2), (9.0, 11.0)]
+    got = parse_oddstf(NAV + _page(win, place))
+    assert [got["win"][str(i + 1)] for i in range(6)] == win
+    assert got["place"]["6"] == {"lo": 9.0, "hi": 11.0}
+
+
+def test_parse_oddstf_without_place_table():
+    win = [1.2, 8.4, 5.5, 11.0, 30.2, 45.0]
+    got = parse_oddstf(NAV + WIN_HTML.format("".join(_ROW.format(b=i + 1, o=f"<td>{v}</td>") for i, v in enumerate(win)), ""))
+    assert [got["win"][str(i + 1)] for i in range(6)] == win and got["place"] == {}
+
+
+def test_digest_reports_structure():
+    from boatlab.ingest.official_web import digest_oddstf
+    d = digest_oddstf(_page([1.2] * 6, [(1.0, 1.1)] * 6))
+    assert "is-boatColor=12" in d and "runs=" in d
+    assert "is-boatColor=0" in digest_oddstf("<html>別ページ</html>")
+
+
 def test_parse_oddstf():
     win = [1.5, 12.3, 4.0, 9.9, 25.0, 60.0]
     place = [(1.0, 1.2), (2.5, 3.1), (1.8, 2.2), (2.0, 2.4), (4.0, 5.0), (8.0, 9.0)]

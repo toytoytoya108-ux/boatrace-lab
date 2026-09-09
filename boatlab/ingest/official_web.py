@@ -80,12 +80,13 @@ def fetch_odds3t(fetcher: Fetcher, d: date, stadium: int, rno: int) -> OddsRec |
 # ---------------------------------------------------------------- 単勝・複勝（oddstf）
 _BOATCOLOR = re.compile(r"is-boatColor([1-6])")
 _NUM = re.compile(r"\d+\.\d+")
+_ROWSPLIT = re.compile(r"<tr[^>]*>", re.I)
 
 
 def _boat_blocks(html: str) -> list[tuple[int, list[float]]]:
     """`is-boatColor{n}` の出現ごとに、その直後〜次の艇までに現れる小数を集める。
 
-    公式ページのクラス名（艇番の色）は長く安定しているので、表の構造そのものには依存しない。
+    表の入れ子や class 名の増減に影響されないよう、艇番の色クラスだけを手がかりにする。
     """
     out: list[tuple[int, list[float]]] = []
     marks = list(_BOATCOLOR.finditer(html))
@@ -96,33 +97,60 @@ def _boat_blocks(html: str) -> list[tuple[int, list[float]]]:
     return out
 
 
+def _runs(blocks: list[tuple[int, list[float]]]) -> list[list[list[float]]]:
+    """艇番が 1→6 と並ぶ塊に切り出す（1つの塊＝1つのオッズ表）。数値の無い塊は捨てる。"""
+    runs, cur = [], []
+    for b, nums in blocks:
+        if b == len(cur) + 1:
+            cur.append(nums)
+        else:
+            if len(cur) == 6:
+                runs.append(cur)
+            cur = [nums] if b == 1 else []
+        if len(cur) == 6:
+            runs.append(cur)
+            cur = []
+    return [r for r in runs if all(len(x) >= 1 for x in r)]
+
+
 def parse_oddstf(html: str) -> dict[str, dict]:
     """単勝・複勝オッズ。戻り値 {'win': {'1': 1.5, ...}, 'place': {'1': {'lo':..,'hi':..}, ...}}。
 
-    ページを「単勝」「複勝」の見出しで前後に割り、それぞれで艇番→数値を拾う。
-    見出しが見つからなければ、艇番の出現順で前半6件＝単勝・後半6件＝複勝とみなす。
-    どちらでも 6 艇そろわなければ空 dict を返す（呼び出し側で NULL 扱い）。
+    ページ内の「艇番1〜6が並ぶ塊」を全部拾い、数値が1つだけの塊＝単勝、2つ以上の塊＝複勝とみなす
+    （複勝は下限・上限の2つが出る）。見出しの位置や表のクラス名には依存しない。
+    6艇そろった単勝が取れなければ空 dict を返す（呼び出し側で NULL 扱い）。
     """
     text = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    i_win, i_pl = text.find("単勝"), text.find("複勝")
-    win_blocks, pl_blocks = [], []
-    if 0 <= i_win < i_pl:
-        win_blocks = _boat_blocks(text[i_win:i_pl])
-        pl_blocks = _boat_blocks(text[i_pl:])
-    else:
-        blocks = _boat_blocks(text)
-        win_blocks, pl_blocks = blocks[:6], blocks[6:12]
-    win: dict[str, float] = {}
-    for b, nums in win_blocks:
-        if nums and str(b) not in win:
-            win[str(b)] = nums[0]
-    place: dict[str, dict] = {}
-    for b, nums in pl_blocks:
-        if nums and str(b) not in place:
-            place[str(b)] = {"lo": nums[0], "hi": nums[1] if len(nums) > 1 else nums[0]}
-    if len(win) != 6:
+    runs = _runs(_boat_blocks(text))
+    win_run = next((r for r in runs if max(len(x) for x in r) == 1), None)
+    place_run = next((r for r in runs if min(len(x) for x in r) >= 2), None)
+    if win_run is None and len(runs) >= 1:
+        win_run = runs[0]                       # 単勝側にも余分な数値が入っていた場合
+    if win_run is None:
         return {}
-    return {"win": win, "place": place if len(place) == 6 else {}}
+    win = {str(i + 1): win_run[i][0] for i in range(6)}
+    place = {}
+    if place_run is not None and place_run is not win_run:
+        place = {str(i + 1): {"lo": place_run[i][0], "hi": place_run[i][1]} for i in range(6)}
+    return {"win": win, "place": place}
+
+
+def digest_oddstf(html: str) -> str:
+    """パーサが外れたときに構造を報告するための要約（1画面に収まる短さ）。"""
+    text = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    marks = _BOATCOLOR.findall(text)
+    lines = [f"len={len(html)} is-boatColor={len(marks)}{'' if not marks else ' 順=' + ''.join(marks[:14])}"]
+    classes = sorted({c for c in re.findall(r'class="([^"]{0,60})"', text)
+                      if re.search(r"boat|odds|oddsPoint|numberSet", c, re.I)})[:12]
+    lines.append("class候補: " + (" | ".join(classes) if classes else "なし"))
+    blocks = _boat_blocks(text)
+    for b, nums in blocks[:8]:
+        lines.append(f"  艇{b}: {nums[:4]}")
+    lines.append(f"runs={[[len(x) for x in r] for r in _runs(blocks)][:4]}")
+    if not marks:
+        i = max(text.find("単勝"), 0)
+        lines.append("単勝付近: " + _TAG.sub(" ", text[i:i + 200]).replace("\n", " ")[:160])
+    return "\n".join(lines)
 
 
 def fetch_oddstf(fetcher: Fetcher, d: date, stadium: int, rno: int, tag: str = "") -> list[OddsRec]:
