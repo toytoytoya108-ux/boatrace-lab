@@ -167,3 +167,18 @@ def fetch_oddstf(fetcher: Fetcher, d: date, stadium: int, rno: int, tag: str = "
     if parsed.get("place"):
         recs.append(OddsRec(race_id=rid, bet_type="place", captured_at=now, source="official_web", odds=parsed["place"]))
     return recs
+
+
+def digest_odds3t(html: str) -> str:
+    """3連単オッズ表が読めないときに構造を報告する（1画面に収まる短さ）。"""
+    text = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    tables = re.findall(r"<table([^>]*)>(.*?)</table>", text, flags=re.S)
+    lines = [f"len={len(html)} tables={len(tables)} 小数の総数={len(_NUM.findall(_TAG.sub(' ', text)))}"
+             f" is-w495={len(re.findall(r'is-w495', text))} parse={len(parse_odds3t(html))}"]
+    for i, (attr, body) in enumerate(tables[:4]):
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", body, flags=re.S)
+        cls = (re.search(r'class="([^"]*)"', attr) or [None, "-"])[1]
+        lines.append(f"[表{i}] class={cls[:40]} tr={len(rows)}")
+        for r in rows[:3]:
+            lines.append("   " + str(_cells(r))[:110])
+    return "\n".join(lines)

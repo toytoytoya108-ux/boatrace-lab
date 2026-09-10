@@ -173,5 +173,43 @@ def poolgap_report():
         typer.echo(f"  締切前→確定のオッズ変化: 中央値{d['median']*100:.1f}% / ±10%以内 {d['within10']*100:.0f}%（{d['n']}件）")
 
 
+@app.command("check-odds3t")
+def check_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer.Option(..., "--race"),
+                 day: str = typer.Option("", "--day")):
+    """3連単オッズが公式ページから読めているかを確認する（本番サーバーで実行）。
+
+    直近に公式オッズが何件保存されているかも表示する。0 が続いていれば取得できていない。
+    """
+    from datetime import date as _date
+
+    from sqlalchemy import text as _text
+
+    from boatlab.ingest.history import make_fetcher
+    from boatlab.ingest.official_web import digest_odds3t, fetch_odds3t
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    try:
+        import pandas as pd
+        df = pd.read_sql_query(_text("""
+            SELECT substr(CAST(race_id AS TEXT),1,8) AS d, bet_type, COUNT(*) AS n
+            FROM odds_snapshots WHERE source='official_web' GROUP BY d, bet_type ORDER BY d DESC LIMIT 12"""), get_engine())
+        typer.echo("公式サイトから保存できたオッズ（日別）:")
+        typer.echo(df.to_string(index=False) if len(df) else "  0件（一度も保存できていません）")
+    except Exception as e:
+        typer.echo(f"  DB確認に失敗: {e!r}")
+    d = _date.fromisoformat(day) if day else now_jst().date()
+    f = make_fetcher()
+    rec = fetch_odds3t(f, d, stadium, race)
+    if rec is not None:
+        typer.echo(f"OK: 3連単 {len(rec.odds)} 通り読めています。例 1-2-3={rec.odds.get('1-2-3')}")
+        return
+    from boatlab.config import OFFICIAL_ODDS3T
+    url = OFFICIAL_ODDS3T.format(rno=race, jcd=stadium, yyyymmdd=d.strftime("%Y%m%d"))
+    res = f.fetch("official_web", url, f"odds3t/{d:%Y%m%d}/{stadium:02d}_{race:02d}_debug.html", use_cache=False)
+    typer.echo("読めませんでした。---- 構造の要約（このままチャットに貼ってください）----")
+    typer.echo(digest_odds3t(res.content.decode("utf-8", errors="replace")))
+    raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()
