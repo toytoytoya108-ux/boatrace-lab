@@ -24,47 +24,61 @@ def _cells(row_html: str) -> list[str]:
     return [_TAG.sub("", c).replace("\n", "").strip() for c in cells]
 
 
-def parse_odds3t(html: str) -> dict[str, float | None]:
-    text = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-    tables = re.findall(r"<table[^>]*class=\"[^\"]*is-w495[^\"]*\"[^>]*>(.*?)</table>", text, flags=re.S)
+def _odds3t_table(tb: str) -> dict[str, float | None]:
+    """1つの表から 3連単オッズを読む。表は「1着艇ごとの6列 × (2着・3着・オッズ)」で、
+    2着セルは rowspan=4 のためブロック先頭行にしか出てこない（carry で引き継ぐ）。"""
     out: dict[str, float | None] = {}
-    for tb in tables:
-        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", tb, flags=re.S)
-        first_boats: list[int] = []
-        carry: dict[int, int] = {}
-        for r in rows:
-            vals = _cells(r)
-            if not first_boats:
-                if len(vals) == 6 and all(re.fullmatch(r"\d", v) for v in vals):
-                    first_boats = [int(v) for v in vals]
-                continue
-            seq: list[tuple[str, float | int | None]] = []
-            for v in vals:
-                if re.fullmatch(r"\d", v):
-                    seq.append(("b", int(v)))
-                elif re.fullmatch(r"\d+\.\d+", v):
-                    seq.append(("o", float(v)))
-                else:
-                    seq.append(("o", None))  # 欠場・空欄
-            i = 0
-            for k in range(6):
-                if i >= len(seq):
-                    break
-                second = None
-                if seq[i][0] == "b" and i + 1 < len(seq) and seq[i + 1][0] == "b":
-                    second = int(seq[i][1]); i += 1
-                if i >= len(seq) or seq[i][0] != "b":
-                    break
-                third = int(seq[i][1]); i += 1
-                odds = seq[i][1] if i < len(seq) and seq[i][0] == "o" else None
-                i += 1
-                if second is None:
-                    second = carry.get(k)
-                else:
-                    carry[k] = second
-                if second is not None:
-                    out[f"{first_boats[k]}-{second}-{third}"] = odds
+    first_boats: list[int] = []
+    carry: dict[int, int] = {}
+    for r in re.findall(r"<tr[^>]*>(.*?)</tr>", tb, flags=re.S):
+        vals = _cells(r)
+        if not first_boats:
+            # 見出し行: 1桁の数字が 1..6 の順で並ぶ（選手名など他のセルが混ざっていてもよい）
+            digits = [int(v) for v in vals if re.fullmatch(r"\d", v)]
+            if digits == [1, 2, 3, 4, 5, 6]:
+                first_boats = digits
+            continue
+        seq: list[tuple[str, float | int | None]] = []
+        for v in vals:
+            if re.fullmatch(r"\d", v):
+                seq.append(("b", int(v)))
+            elif re.fullmatch(r"\d+\.\d+", v):
+                seq.append(("o", float(v)))
+            else:
+                seq.append(("o", None))  # 欠場・空欄
+        i = 0
+        for k in range(6):
+            if i >= len(seq):
+                break
+            second = None
+            if seq[i][0] == "b" and i + 1 < len(seq) and seq[i + 1][0] == "b":
+                second = int(seq[i][1]); i += 1
+            if i >= len(seq) or seq[i][0] != "b":
+                break
+            third = int(seq[i][1]); i += 1
+            odds = seq[i][1] if i < len(seq) and seq[i][0] == "o" else None
+            i += 1
+            if second is None:
+                second = carry.get(k)
+            else:
+                carry[k] = second
+            if second is not None:
+                out[f"{first_boats[k]}-{second}-{third}"] = odds
     return out
+
+
+def parse_odds3t(html: str) -> dict[str, float | None]:
+    """3連単オッズ。ページ内の全ての表を試し、いちばん多く読めたものを採用する。
+
+    公式ページの table には class が付いていないことがあるため、class では絞り込まない。
+    """
+    text = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    best: dict[str, float | None] = {}
+    for tb in re.findall(r"<table[^>]*>(.*?)</table>", text, flags=re.S):
+        got = _odds3t_table(tb)
+        if len(got) > len(best):
+            best = got
+    return best
 
 
 def fetch_odds3t(fetcher: Fetcher, d: date, stadium: int, rno: int) -> OddsRec | None:
