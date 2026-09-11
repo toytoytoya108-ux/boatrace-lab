@@ -263,5 +263,69 @@ def today_status():
         typer.echo(f"結果の最終取り込み時刻: {max(last)}")
 
 
+@app.command("odds-drift")
+def odds_drift(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=前日）")):
+    """3連単オッズが締切前から確定までどれだけ動くかを実測する。
+
+    これまでの実オッズ検証は全て「確定オッズ」で行っている。買えるのは締切前なので、
+    大きく動くなら過去の回収率はすべて割り引いて読む必要がある（単勝プールはこれで全滅した）。
+    """
+    import json as _json
+    from datetime import date as _date, timedelta as _td
+
+    import numpy as np
+    import pandas as pd
+    from sqlalchemy import text as _text
+
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    d = _date.fromisoformat(day) if day else (now_jst().date() - _td(days=1))
+    lo, hi = int(d.strftime("%Y%m%d")) * 10000, (int(d.strftime("%Y%m%d")) + 1) * 10000
+    df = pd.read_sql_query(_text("""
+        SELECT race_id, source, captured_at, odds FROM odds_snapshots
+        WHERE bet_type='3t' AND race_id >= :lo AND race_id < :hi AND source IN ('official_web','turnmark_final')
+        ORDER BY race_id, captured_at"""), get_engine(), params={"lo": lo, "hi": hi})
+    if not len(df):
+        typer.echo(f"{d}: 3連単オッズのデータがありません")
+        raise typer.Exit(1)
+    load = lambda v: _json.loads(v) if isinstance(v, str) else v
+    pre, fin = {}, {}
+    for _, r in df.iterrows():
+        (fin if r["source"] == "turnmark_final" else pre)[r["race_id"]] = load(r["odds"])
+    both = sorted(set(pre) & set(fin))
+    typer.echo(f"{d}: 締切前 {len(pre)}R / 確定 {len(fin)}R / 突合できた {len(both)}R")
+    if not both:
+        typer.echo("確定オッズがまだ取り込まれていません（翌朝06:10のジョブ後に再実行してください）")
+        raise typer.Exit(1)
+    rows = []
+    for rid in both:
+        a, b = pre[rid], fin[rid]
+        for k, v in a.items():
+            w = b.get(k)
+            if v and w and float(v) > 0 and float(w) > 0:
+                rows.append((float(v), float(w)))
+    x = np.array(rows)
+    drift = x[:, 1] / x[:, 0] - 1.0
+    typer.echo(f"買い目 {len(x):,} 通りで比較")
+    typer.echo(f"  全体: 中央値 {np.median(drift)*100:+.1f}%  10〜90%点 {np.percentile(drift,10)*100:+.0f}〜{np.percentile(drift,90)*100:+.0f}%"
+               f"  ±10%以内 {np.mean(np.abs(drift) <= .10)*100:.1f}%")
+    typer.echo("  締切前オッズ帯ごと:")
+    for a_, b_ in ((1, 5), (5, 10), (10, 20), (20, 50), (50, 200), (200, 1e9)):
+        m = (x[:, 0] >= a_) & (x[:, 0] < b_)
+        if m.sum() < 30:
+            continue
+        dd = drift[m]
+        lab = f"{a_}〜{b_}倍" if b_ < 1e8 else f"{a_}倍〜"
+        typer.echo(f"    {lab:>10}  n={int(m.sum()):6d}  中央値 {np.median(dd)*100:+6.1f}%  ±10%以内 {np.mean(np.abs(dd)<=.10)*100:5.1f}%"
+                   f"  10〜90%点 {np.percentile(dd,10)*100:+.0f}〜{np.percentile(dd,90)*100:+.0f}%")
+    inv_pre = np.array([sum(1/float(v) for v in pre[r].values() if v and float(v) > 0) for r in both])
+    inv_fin = np.array([sum(1/float(v) for v in fin[r].values() if v and float(v) > 0) for r in both])
+    typer.echo(f"  Σ(1/オッズ) 中央値: 締切前 {np.median(inv_pre):.3f} / 確定 {np.median(inv_fin):.3f}（1.33前後なら健全）")
+    m = (x[:, 0] >= 5) & (x[:, 0] <= 20)
+    if m.sum() > 30:
+        typer.echo(f"  ※絞り込み型が買う帯（5〜20倍）: 中央値 {np.median(drift[m])*100:+.1f}%、"
+                   f"期待値はおおむね {(1+np.median(drift[m]))*100:.0f}% 倍に補正される")
+
+
 if __name__ == "__main__":
     app()
