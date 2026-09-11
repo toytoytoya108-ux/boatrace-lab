@@ -107,7 +107,12 @@ def health(_=Depends(require_auth)):
 def _freshness(day) -> dict:
     """画面用の更新時刻: 最終取込（morning/intraday の完了）・最終予想保存・進行中ジョブ・停滞判定。"""
     last_ok = _q("SELECT job, finished_at FROM job_run WHERE job IN ('morning','intraday') AND ok=1 ORDER BY id DESC LIMIT 1")
-    running = _q("SELECT job, started_at FROM job_run WHERE finished_at IS NULL AND ok IS NULL ORDER BY id DESC LIMIT 1")
+    # finished_at が NULL のまま残るのは、途中でプロセスが落ちた場合も同じ。2時間以上前のものは
+    # 「実行中」ではなく「中断」として扱う（過去の異常終了がいつまでも実行中に見えるのを防ぐ）
+    running = _q("SELECT job, started_at FROM job_run WHERE finished_at IS NULL AND ok IS NULL "
+                 "AND started_at >= :t ORDER BY id DESC LIMIT 1", t=str(now_jst() - timedelta(hours=2)))
+    stuck = _q("SELECT job, started_at FROM job_run WHERE finished_at IS NULL AND ok IS NULL "
+               "AND started_at < :t ORDER BY id DESC LIMIT 1", t=str(now_jst() - timedelta(hours=2)))
     last_pred = _q("SELECT MAX(p.created_at) AS t FROM predictions p JOIN races r ON r.id=p.race_id WHERE r.race_date=:d", d=str(day))
     now = now_jst()
     ingest_at = last_ok[0]["finished_at"] if last_ok else None
@@ -120,7 +125,7 @@ def _freshness(day) -> dict:
         except Exception:
             stale_min = None
     return {"now": now.isoformat(timespec="minutes"), "ingest_at": ingest_at, "predict_at": last_pred[0]["t"] if last_pred else None,
-            "running": running[0] if running else None, "racing_hours": racing,
+            "running": running[0] if running else None, "stuck": stuck[0] if stuck else None, "racing_hours": racing,
             "stale": bool(racing and day == now.date() and (stale_min is None or stale_min > 15)), "stale_min": stale_min}
 
 
@@ -361,6 +366,102 @@ def poolgap(day: str | None = None, _=Depends(require_auth)):
         row = s.execute(select(SettingsVersion).order_by(SettingsVersion.id.desc())).scalars().first()
         prm = poolgap_from_settings(row) if row else PoolGapParams()
     return {**rep, "params": prm.to_dict()}
+
+
+_upstream_cache: dict = {"at": None, "value": None}
+
+
+def _upstream_results(day) -> dict | None:
+    """上流 today.json に「中身のある結果」が何レース分あるか。120秒キャッシュ。
+
+    result ブロックは未確定でも空の入れ物として存在するため、着順か払戻があるものだけ数える。
+    """
+    now = now_jst()
+    c = _upstream_cache
+    if c["at"] and (now - c["at"]).total_seconds() < 120:
+        return c["value"]
+    val = None
+    try:
+        import httpx
+
+        from boatlab.config import OPENAPI_API_TODAY
+        doc = httpx.get(OPENAPI_API_TODAY, timeout=20).json()
+        st = ((doc or {}).get("programs") or {}).get("stadiums") or {}
+        n = filled = 0
+        for s_key, sv in st.items():
+            for _, r in (sv.get("races") or {}).items():
+                if str(r.get("date") or day)[:10] != str(day):
+                    continue
+                n += 1
+                rs = r.get("result") or {}
+                pay = rs.get("payouts") or {}
+                racers = rs.get("racers") or {}
+                has_pay = any(v for v in pay.values())
+                has_place = any((x or {}).get("place_number") for x in
+                                (racers.values() if isinstance(racers, dict) else racers))
+                if has_pay or has_place:
+                    filled += 1
+        val = {"races": n, "filled": filled}
+    except Exception as e:
+        val = {"error": repr(e)[:120]}
+    c["at"], c["value"] = now, val
+    return val
+
+
+@app.get("/api/status")
+def status(_=Depends(require_auth)):
+    """システムの状態。「上流が遅れている」のか「取り込みが壊れている」のかを画面で判別できるようにする。"""
+    day = now_jst().date()
+    t = {"date": str(day)}
+    row = _q("SELECT COUNT(*) AS n, SUM(CASE WHEN res.race_id IS NOT NULL THEN 1 ELSE 0 END) AS done, "
+             "SUM(CASE WHEN r.closed_at < :now AND res.race_id IS NULL THEN 1 ELSE 0 END) AS waiting, "
+             "SUM(CASE WHEN r.closed_at < :now THEN 1 ELSE 0 END) AS closed "
+             "FROM races r LEFT JOIN results res ON res.race_id = r.id WHERE r.race_date = :d",
+             d=str(day), now=str(now_jst().replace(tzinfo=None)))
+    t.update(races=int(row[0]["n"] or 0), results=int(row[0]["done"] or 0), waiting=int(row[0]["waiting"] or 0))
+    closed_so_far = int(row[0]["closed"] or 0)
+    up = _upstream_results(day) if t["waiting"] else None
+    t["upstream"] = up
+    if not t["races"]:
+        t["verdict"], t["note"] = "wait", "本日の出走表がまだ取り込まれていません"
+    elif not t["waiting"]:
+        t["verdict"], t["note"] = "ok", "締切を過ぎたレースの結果はすべて入っています"
+    elif up and up.get("error"):
+        t["verdict"], t["note"] = "unknown", f"上流を確認できませんでした（{up['error']}）"
+    elif up and up.get("filled", 0) - t["results"] >= 3:
+        t["verdict"] = "ng"
+        t["note"] = f"上流には{up['filled']}件あるのにDBは{t['results']}件。取り込みに問題があります"
+    else:
+        t["verdict"] = "upstream"
+        t["note"] = f"{t['waiting']}レースが結果待ち。上流がまだ結果を出していません（翌朝06:10の取込で埋まります）"
+
+    o = {x["bet_type"]: int(x["n"]) for x in _q(
+        "SELECT bet_type, COUNT(*) AS n FROM odds_snapshots WHERE source='official_web' "
+        "AND race_id >= :lo AND race_id < :hi GROUP BY bet_type",
+        lo=int(day.strftime("%Y%m%d")) * 10000, hi=(int(day.strftime("%Y%m%d")) + 1) * 10000)}
+    odds = {"trifecta": o.get("3t", 0), "win": o.get("win", 0), "place": o.get("place", 0)}
+    if closed_so_far < 3:
+        odds["verdict"], odds["note"] = "wait", "取得は最初のレースの締切前から始まります"
+    elif odds["trifecta"] and odds["win"]:
+        odds["verdict"], odds["note"] = "ok", "3連単・単勝・複勝とも取得できています"
+    else:
+        miss = [n for n, k in (("3連単", "trifecta"), ("単勝", "win")) if not odds[k]]
+        odds["verdict"] = "ng"
+        odds["note"] = f"{'・'.join(miss)}のオッズが1件も取れていません（公式サイトの構造変更の可能性）"
+
+    pg = _q("SELECT COUNT(*) AS n, COUNT(DISTINCT race_id) AS races FROM pool_gap_picks WHERE race_id >= :lo AND race_id < :hi",
+            lo=int(day.strftime("%Y%m%d")) * 10000, hi=(int(day.strftime("%Y%m%d")) + 1) * 10000)
+    pred = _q("SELECT COUNT(*) AS n, SUM(CASE WHEN p.flags LIKE '%odds_estimated%' THEN 1 ELSE 0 END) AS est "
+              "FROM predictions p JOIN races r ON r.id=p.race_id "
+              "WHERE r.race_date=:d AND p.stage='final' AND p.role='focused'", d=str(day))
+    jobs = _q("SELECT job, started_at, finished_at, ok, substr(COALESCE(error,''),1,120) AS error "
+              "FROM job_run ORDER BY id DESC LIMIT 12")
+    fail = _q("SELECT source, COUNT(*) AS n FROM fetch_log WHERE ok=0 AND started_at >= :t GROUP BY source",
+              t=str(now_jst() - timedelta(days=1)))
+    return {"now": now_jst().isoformat(timespec="minutes"), "today": t, "odds": odds,
+            "poolgap": {"picks": int(pg[0]["n"] or 0), "races": int(pg[0]["races"] or 0)},
+            "predictions": {"final": int(pred[0]["n"] or 0), "estimated_odds": int(pred[0]["est"] or 0)},
+            "jobs": jobs, "fetch_failures_24h": fail, "freshness": _freshness(day)}
 
 
 @app.get("/api/backtests")

@@ -52,6 +52,7 @@ label{display:block;font-size:13px;color:var(--ink2);margin:8px 0}label input,la
 .judge{border-left:4px solid var(--acc);padding-left:10px}.judge.ok{border-color:var(--ok)}.judge.ng{border-color:var(--buoy)}
 details summary{cursor:pointer;color:var(--acc);font-size:13px}
 details.sec{margin:10px 0}details.sec>summary{font-size:15px;font-weight:700;color:var(--ink);padding:10px 12px;background:var(--sf);border:1px solid var(--line);border-radius:10px;list-style:none;display:flex;justify-content:space-between;align-items:center}details.sec>summary::-webkit-details-marker{display:none}details.sec>summary::after{content:"＋";color:var(--ink2);font-weight:400}details.sec[open]>summary::after{content:"－"}details.sec[open]>summary{border-radius:10px 10px 0 0}details.sec>.card{margin-top:0;border-top:0;border-radius:0 0 10px 10px}
+.warnTxt{color:var(--ng)}
 .fresh{font-size:12px;color:var(--ink2);margin:6px 0 2px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}.fresh.warn{background:var(--warnbg);color:var(--warn);padding:6px 10px;border-radius:8px}
 .offline{background:var(--warnbg);color:var(--warn);font-size:12px;padding:6px 10px;border-radius:8px;margin:8px 0;display:none}
 .login{max-width:320px;margin:80px auto;text-align:center}
@@ -74,6 +75,7 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 </nav>
 <script>
 const $ = (s, el=document) => el.querySelector(s);
+const NOW = () => new Date();
 const fmtP = v => v==null ? "–" : (v*100).toFixed(1)+"%";
 const fmtY = v => v==null ? "–" : (v>=0?"+":"") + Math.round(v).toLocaleString() + "円";
 const fmtN = v => v==null ? "–" : Math.round(v).toLocaleString();
@@ -135,7 +137,8 @@ function renderLogin() {
 const tm = s => s ? String(s).replace("T"," ").slice(5,16).replace("-","/") : "–";
 function freshLine(u) {
   if (!u) return "";
-  const run = u.running ? `<span class="pill warn">実行中: ${u.running.job} ${tm(u.running.started_at).slice(6)}〜</span>` : "";
+  const run = u.running ? `<span class="pill warn">実行中: ${u.running.job} ${tm(u.running.started_at).slice(6)}〜</span>`
+    : (u.stuck ? `<span class="pill warn">中断: ${u.stuck.job} ${tm(u.stuck.started_at)}</span>` : "");
   const warn = u.stale ? `<b>⚠ 更新が止まっています</b>（最終取込 ${tm(u.ingest_at)}${u.stale_min != null ? `、${u.stale_min}分前` : ""}）` : `最終取込 <b>${tm(u.ingest_at)}</b>`;
   return `<div class="fresh ${u.stale ? "warn" : ""}"><span>${warn}</span><span>最終予想保存 <b>${tm(u.predict_at)}</b></span>${run}<span class="muted">表示 ${tm(u.now).slice(6)}</span></div>`;
 }
@@ -149,7 +152,9 @@ function planText(r) {
 function raceRow(r, compact) {
   const name = compact ? `${r.race_no}R <small style="display:inline;color:var(--ink2);font-weight:400">${r.stadium}</small>` : `${r.stadium} ${r.race_no}R`;
   const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : (r.provisional ? `<span class="pill warn">暫定</span>` : `<span class="pill">未予想</span>`);
-  const res = r.valid ? `<span class="pill ${r.hit ? "hit" : "miss"}">${r.hit ? "🎯 " + fmtY(r.pnl) : "外れ"}</span>` : (r.trifecta ? `<span class="pill">${r.trifecta}</span>` : "");
+  const res = r.valid ? `<span class="pill ${r.hit ? "hit" : "miss"}">${r.hit ? "🎯 " + fmtY(r.pnl) : "外れ"}</span>`
+    : (r.trifecta ? `<span class="pill">${r.trifecta}</span>`
+      : (r.closed_at && new Date(r.closed_at) < NOW() ? `<span class="pill warn">結果待ち</span>` : ""));
   return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${name}</b> <small>締切 ${hhmm(r.closed_at)}・${r.grade || ""} ${r.race_type || ""}${r.stage === "program" ? "・出走表のみ" : ""}</small>
     <div class="bar" style="margin-top:4px"><i style="width:${Math.round((r.confidence || 0) * 100)}%"></i></div></div>
     <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">EV ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div><div class="muted">${planText(r)}</div></div><div class="right">${dec}<br>${res}</div></div>`;
@@ -182,17 +187,20 @@ function readinessCard(rd) {
 function stadiumSummary(races) {
   const by = new Map();
   for (const r of races) {
-    if (!by.has(r.stadium_code)) by.set(r.stadium_code, { code: r.stadium_code, name: r.stadium, grade: r.grade || "", n: 0, pred: 0, prov: 0, buy: 0, done: 0, next: null, stake: 0, pay: 0, hits: 0, scored: 0 });
+    if (!by.has(r.stadium_code)) by.set(r.stadium_code, { code: r.stadium_code, name: r.stadium, grade: r.grade || "", n: 0, pred: 0, prov: 0, buy: 0, done: 0, wait: 0, next: null, stake: 0, pay: 0, hits: 0, scored: 0 });
     const s = by.get(r.stadium_code);
     s.n++; if (r.prediction_id && !r.provisional) s.pred++; if (r.provisional) s.prov++; if (r.decision === "buy") s.buy++;
-    if (r.trifecta) s.done++; else if (r.closed_at && (!s.next || r.closed_at < s.next)) s.next = r.closed_at;
+    if (r.trifecta) s.done++;
+    else if (r.closed_at && new Date(r.closed_at) < NOW()) s.wait++;
+    else if (r.closed_at && (!s.next || r.closed_at < s.next)) s.next = r.closed_at;
     if (r.decision === "buy" && r.valid) { s.scored++; s.stake += r.stake_total || 0; s.pay += r.payout_total || 0; if (r.hit) s.hits++; }
   }
   return [...by.values()].sort((a, b) => a.code - b.code);
 }
 function stadiumCard(s) {
-  const pnl = s.pay - s.stake, fin = s.done >= s.n;
-  const prog = fin ? "終了" : (s.done ? `${s.done}/${s.n}R終了` : "開始前") + (s.next ? ` · 次 ${hhmm(s.next)}締切` : "");
+  const pnl = s.pay - s.stake, fin = s.done + s.wait >= s.n && !s.wait;
+  const prog = (fin ? "終了" : (s.done ? `${s.done}/${s.n}R終了` : "開始前") + (s.next ? ` · 次 ${hhmm(s.next)}締切` : ""))
+    + (s.wait ? ` · <span class="warnTxt">結果待ち${s.wait}R</span>` : "");
   const res = s.scored ? `<span class="pl ${pnl >= 0 ? "pos" : "neg"}">${s.hits}/${s.scored}的中 ${fmtY(pnl)}</span>` : (s.buy ? `<span class="pl">推奨${s.buy}R（結果待ち）</span>` : `<span class="muted">推奨なし</span>`);
   return `<div class="st ${fin ? "done" : ""}" onclick="resetF({stadium:'${s.code}',dec:'all'});go('races',{rv:'list'})"><b class="nm">${s.name}</b><span class="g">${s.grade}</span>${s.buy ? `<span class="rec">★${s.buy}</span>` : ""}
     <div class="ln">${prog}</div><div class="ln">確定予想 ${s.pred}/${s.n}R${s.prov ? `（暫定${s.prov}）` : ""} · ${res}</div></div>`;
@@ -376,16 +384,48 @@ async function renderModels(m) {
   m.innerHTML = poolgapSection(pg) + researchSection(rs) + `<h2>モデル版</h2><div class="card">${ms.map(x => `<div class="row" style="cursor:default"><div class="t"><b>Model ${x.version}</b> <span class="pill ${x.status === "active" ? "buy" : ""}">${x.status}</span><small>${x.description || ""} · 学習 〜${x.trained_until || "–"}</small></div>${x.status !== "active" ? `<button class="btn ghost" onclick="if(confirm('Model ${x.version} を採用しますか？'))api('/api/models/${x.version}/activate',{method:'POST'}).then(()=>render())">採用</button> <button class="btn ghost" onclick="api('/api/models/${x.version}/status',{method:'POST',body:JSON.stringify({status:'${x.status === "shadow" ? "candidate" : "shadow"}'})}).then(()=>render())">${x.status === "shadow" ? "並走停止" : "並走"}</button>` : ""}</div>`).join("") || '<p class="muted">未登録</p>'}</div>
     <h2>バックテスト</h2>${Object.entries(bt).map(([k, v]) => `<div class="card"><details><summary>${k}</summary><pre class="md">${v.replace(/</g, "&lt;")}</pre></details></div>`).join("") || '<p class="muted">レポートなし</p>'}`;
 }
+// ---------------- システムの状態（「上流待ち」か「故障」かを画面で判別する）
+const V_PILL = { ok: "hit", upstream: "warn", wait: "skip", ng: "miss", unknown: "warn" };
+const V_TEXT = { ok: "正常", upstream: "上流待ち", wait: "待機中", ng: "異常", unknown: "不明" };
+function statusRow(label, verdict, main, note) {
+  return `<div class="row" style="cursor:default"><div class="t"><b>${label}</b> <span class="pill ${V_PILL[verdict] || ""}">${V_TEXT[verdict] || verdict}</span>
+    <small>${note}</small></div><div class="right mono">${main}</div></div>`;
+}
+function statusSection(x) {
+  if (!x) return "";
+  const t = x.today, o = x.odds, f = x.freshness || {};
+  const up = t.upstream && t.upstream.filled != null ? `（上流 ${t.upstream.filled}/${t.upstream.races}）` : "";
+  const badJobs = (x.jobs || []).filter(j => j.ok === 0);
+  const est = x.predictions.estimated_odds;
+  return `<details class="sec" open><summary>システムの状態 <span class="muted">${tm(x.now).slice(6)} 時点</span></summary><div class="card">
+    ${statusRow("本日の結果", t.verdict, `${t.results}/${t.races}${up}`, t.note)}
+    ${statusRow("公式オッズ", o.verdict, `3連単${o.trifecta} / 単勝${o.win} / 複勝${o.place}`, o.note)}
+    ${statusRow("プール差の記録", x.poolgap.picks ? "ok" : "wait", `${x.poolgap.picks}件`,
+      x.poolgap.picks ? `${x.poolgap.races}レースから記録` : "候補が出たら記録されます")}
+    ${statusRow("確定予想", est ? "ng" : (x.predictions.final ? "ok" : "wait"), `${x.predictions.final}件`,
+      est ? `${est}件が推定オッズで作られています（公式オッズの取得を確認してください）` : "実オッズで作成")}
+    <p class="muted" style="margin:8px 0 0">${f.stale ? "⚠ 取り込みが15分以上止まっています。" : ""}
+      最終取込 ${tm(f.ingest_at)} · 最終予想 ${tm(f.predict_at)}${f.stuck ? ` · 中断したジョブ: ${f.stuck.job}（${tm(f.stuck.started_at)}）` : ""}</p>
+    </div>
+    <div class="card"><details><summary>直近のジョブ ${badJobs.length ? `<span class="pill miss">失敗${badJobs.length}</span>` : ""}</summary>
+      <div class="tbl"><table class="wide"><thead><tr><th>ジョブ</th><th>開始</th><th>結果</th></tr></thead><tbody>
+      ${(x.jobs || []).map(j => `<tr><td>${j.job}</td><td class="n">${tm(j.started_at)}</td>
+        <td>${j.ok === 1 ? "OK" : (j.ok === 0 ? `<span class="warnTxt">失敗 ${j.error || ""}</span>` : (j.finished_at ? "-" : "実行中/中断"))}</td></tr>`).join("")}
+      </tbody></table></div>
+      ${(x.fetch_failures_24h || []).length ? `<p class="muted">24時間の取得失敗: ${x.fetch_failures_24h.map(f2 => `${f2.source} ${f2.n}件`).join(" / ")}</p>` : ""}
+    </details></div></details>`;
+}
+
 // ---------------- 設定
 async function renderSettings(m) {
-  const s = await api("/api/settings");
+  const [s, sys] = await Promise.all([api("/api/settings"), api("/api/status").catch(() => null)]);
   const rd = s.readiness, ex = s.extra || {};
   const pg = Object.assign({ win_ratio_min: 2.0, place_ratio_min: 1.5, odds_lo: 1.1, odds_hi: 20, stake: 100, enabled: true }, ex.poolgap || {});
   const stk = ex.staking || { method: "uniform" };
   const fc = Object.assign({ enabled: true, s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, cap: 1000, budget: 3000, power: 1.0, completeness_min: 0.6, require_real_odds: false }, ex.focused || {});
   const rf = Object.assign({ min_races: 500, roi: 1.0, roi_ci_lower: 0.95, recent_n: 100, recent_roi: 1.0 }, ex.readiness_focused || {});
   const num = (id, label, v, step, extra="") => `<label>${label}<input id="${id}" type="number" step="${step}" value="${v}" ${extra}></label>`;
-  m.innerHTML = `${modeBar()}<details class="sec" open><summary>絞り込み型の買い方 <span class="muted">推奨用</span></summary><div class="card">
+  m.innerHTML = `${statusSection(sys)}${modeBar()}<details class="sec"><summary>絞り込み型の買い方 <span class="muted">推奨用</span></summary><div class="card">
       <label>有効<select id="fc_enabled"><option value="1" ${fc.enabled ? "selected" : ""}>毎日保存する</option><option value="0" ${!fc.enabled ? "selected" : ""}>停止</option></select></label>
       <div class="two">${num("fc_s15", "自信の下限（上位15点の確率和）", fc.s15_min, 0.01)}${num("fc_ev", "期待値の下限", fc.ev_min, 0.05)}</div>
       <div class="two">${num("fc_olo", "オッズ下限（倍）", fc.odds_lo, 1)}${num("fc_ohi", "オッズ上限（倍）", fc.odds_hi, 5)}</div>
