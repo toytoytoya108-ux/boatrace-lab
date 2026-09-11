@@ -211,5 +211,57 @@ def check_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = type
     raise typer.Exit(1)
 
 
+@app.command("today-status")
+def today_status():
+    """当日データの取り込み状況を、上流(today.json)とDBの両方で突き合わせる。
+
+    「結果が来ていない」ときに、上流が遅れているのか取り込みが止まっているのかを切り分ける。
+    """
+    import httpx
+    import pandas as pd
+    from sqlalchemy import text as _text
+
+    from boatlab.config import OPENAPI_API_TODAY, STADIUMS
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    now = now_jst()
+    typer.echo(f"現在 {now:%Y-%m-%d %H:%M} JST")
+
+    def _races(st):
+        r = st.get("races") or []
+        return list(r.values()) if isinstance(r, dict) else list(r)
+
+    up = {}
+    try:
+        doc = httpx.get(OPENAPI_API_TODAY, timeout=60).json()
+        day = list(doc["programs"].values())[0]
+        for code, st in day.items():
+            rs = _races(st)
+            up[int(code)] = (sum(1 for x in rs if x.get("result")), len(rs))
+        tot = sum(v[1] for v in up.values())
+        typer.echo(f"上流 today.json: {len(up)}場 {tot}レース / 結果あり {sum(v[0] for v in up.values())}")
+    except Exception as e:
+        typer.echo(f"上流の取得に失敗: {e!r}")
+
+    df = pd.read_sql_query(_text("""
+        SELECT r.stadium_code AS c, COUNT(*) AS n,
+               SUM(CASE WHEN res.race_id IS NOT NULL THEN 1 ELSE 0 END) AS done,
+               MAX(CASE WHEN res.race_id IS NOT NULL THEN r.closed_at END) AS last_done,
+               MAX(res.fetched_at) AS last_fetch
+        FROM races r LEFT JOIN results res ON res.race_id = r.id
+        WHERE r.race_date = :d GROUP BY r.stadium_code ORDER BY r.stadium_code"""),
+        get_engine(), params={"d": str(now.date())})
+    typer.echo(f"DB: {len(df)}場 {int(df['n'].sum())}レース / 結果あり {int(df['done'].sum())}")
+    typer.echo("場      DB結果  上流結果  DBで結果のある最後の締切")
+    for _, x in df.iterrows():
+        u = up.get(int(x["c"]))
+        typer.echo(f"{STADIUMS.get(int(x['c']), x['c']):<6} {int(x['done'])}/{int(x['n'])}"
+                   f"     {(str(u[0]) + '/' + str(u[1])) if u else '-':<7}"
+                   f"  {str(x['last_done'])[-8:-3] if x['last_done'] else '-'}")
+    last = df["last_fetch"].dropna()
+    if len(last):
+        typer.echo(f"結果の最終取り込み時刻: {max(last)}")
+
+
 if __name__ == "__main__":
     app()
