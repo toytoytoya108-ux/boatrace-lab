@@ -327,5 +327,89 @@ def odds_drift(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=�
                    f"期待値はおおむね {(1+np.median(drift[m]))*100:.0f}% 倍に補正される")
 
 
+@app.command("favorite-check")
+def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
+                   help="市場が見る『2着以内』確率の下限（2026年探索期間の上位10%）")):
+    """「堅いレースの複勝」の選定が、締切前オッズでも同じになるかを実測する。
+
+    バックテスト（回収率99.1%）は確定オッズで選んでいる。実際に選ぶのは締切前なので、
+    同じレース・同じ艇が選ばれなければ意味がない。単勝プールはここで全滅した。
+    ただし今回は個別の買い目ではなく「1着・2着確率の合計」という集約量なので、安定するはず。
+    """
+    import json as _json
+
+    import numpy as np
+    import pandas as pd
+    from sqlalchemy import text as _text
+
+    from boatlab.model.trifecta import PERM_LABELS, PERMS
+    from boatlab.store.db import get_engine
+    FIRST = np.array([p[0] for p in PERMS])
+    SECOND = np.array([p[1] for p in PERMS])
+    lab2 = {l: i for i, l in enumerate(PERM_LABELS)}
+    eng = get_engine()
+    df = pd.read_sql_query(_text("""
+        SELECT o.race_id, o.source, o.captured_at, o.odds, res.payouts
+        FROM odds_snapshots o LEFT JOIN results res ON res.race_id = o.race_id
+        WHERE o.bet_type='3t' AND o.source IN ('official_web','turnmark_final')
+        ORDER BY o.race_id, o.captured_at"""), eng)
+    if not len(df):
+        typer.echo("3連単オッズがありません")
+        raise typer.Exit(1)
+
+    def place_prob(js):
+        d = _json.loads(js) if isinstance(js, str) else js
+        inv = np.zeros(120)
+        for k, v in d.items():
+            j = lab2.get(k)
+            if j is not None and v and float(v) > 0:
+                inv[j] = 1.0 / float(v)
+        if (inv > 0).sum() < 100:
+            return None
+        q = inv / inv.sum()
+        return np.array([q[(FIRST == a) | (SECOND == a)].sum() for a in range(6)])
+
+    pre, fin, pay = {}, {}, {}
+    for _, r in df.iterrows():
+        v = place_prob(r["odds"])
+        if v is None:
+            continue
+        (fin if r["source"] == "turnmark_final" else pre)[r["race_id"]] = v
+        if r["payouts"] is not None and r["race_id"] not in pay:
+            d = _json.loads(r["payouts"]) if isinstance(r["payouts"], str) else r["payouts"]
+            pay[r["race_id"]] = {int(str(e["combination"]).strip()): float(e["amount"] or 0)
+                                 for e in (d.get("place") or []) if str(e.get("combination", "")).strip().isdigit()}
+    both = sorted(set(pre) & set(fin))
+    typer.echo(f"締切前 {len(pre)}R / 確定 {len(fin)}R / 突合 {len(both)}R（閾値 {threshold}）")
+    if len(both) < 20:
+        typer.echo("突合できたレースが少なすぎます。数日ぶん貯めてから再実行してください。")
+        raise typer.Exit(1)
+    a = np.array([pre[r] for r in both])
+    b = np.array([fin[r] for r in both])
+    sa, sb = a.argmax(1), b.argmax(1)
+    ca, cb = a.max(1), b.max(1)
+    typer.echo(f"  いちばん堅い艇が一致: {(sa == sb).mean()*100:.1f}%")
+    typer.echo(f"  確率の差: 中央値 {np.median(cb - ca)*100:+.2f}pt / 絶対差の中央値 {np.median(np.abs(cb - ca))*100:.2f}pt")
+    pa, pb = ca >= threshold, cb >= threshold
+    inter = int((pa & pb).sum())
+    typer.echo(f"  買い対象レース: 締切前基準 {int(pa.sum())}R / 確定基準 {int(pb.sum())}R / 共通 {inter}R")
+    if pb.sum():
+        typer.echo(f"  確定基準で買うべきレースのうち締切前でも選べた割合: {inter / max(int(pb.sum()), 1)*100:.1f}%")
+    if pa.sum():
+        typer.echo(f"  締切前基準で買ったレースが確定基準でも妥当だった割合: {inter / max(int(pa.sum()), 1)*100:.1f}%")
+    # 締切前の選定で実際に買った場合の成績（結果が揃っているものだけ）
+    ret, n = [], 0
+    for k, r in enumerate(both):
+        if not pa[k] or r not in pay or not pay[r]:
+            continue
+        n += 1
+        ret.append(pay[r].get(int(sa[k]) + 1, 0.0))
+    if n:
+        ret = np.array(ret)
+        typer.echo(f"  締切前の選定で複勝1点100円: n={n} 的中{(ret > 0).mean()*100:.1f}% "
+                   f"回収{ret.sum()/(100*n)*100:.1f}% 元返し{(ret == 100).mean()*100:.1f}%")
+        typer.echo("  ※本数が少ないうちは回収率は大きく振れます。見るべきは上の一致率の方です。")
+
+
 if __name__ == "__main__":
     app()
