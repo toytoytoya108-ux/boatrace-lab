@@ -339,7 +339,6 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
     import json as _json
 
     import numpy as np
-    import pandas as pd
     from sqlalchemy import text as _text
 
     from boatlab.model.trifecta import PERM_LABELS, PERMS
@@ -347,18 +346,11 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
     FIRST = np.array([p[0] for p in PERMS])
     SECOND = np.array([p[1] for p in PERMS])
     lab2 = {l: i for i, l in enumerate(PERM_LABELS)}
-    eng = get_engine()
-    df = pd.read_sql_query(_text("""
-        SELECT o.race_id, o.source, o.captured_at, o.odds, res.payouts
-        FROM odds_snapshots o LEFT JOIN results res ON res.race_id = o.race_id
-        WHERE o.bet_type='3t' AND o.source IN ('official_web','turnmark_final')
-        ORDER BY o.race_id, o.captured_at"""), eng)
-    if not len(df):
-        typer.echo("3連単オッズがありません")
-        raise typer.Exit(1)
 
     def place_prob(js):
         d = _json.loads(js) if isinstance(js, str) else js
+        if not isinstance(d, dict):
+            return None
         inv = np.zeros(120)
         for k, v in d.items():
             j = lab2.get(k)
@@ -369,20 +361,35 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
         q = inv / inv.sum()
         return np.array([q[(FIRST == a) | (SECOND == a)].sum() for a in range(6)])
 
-    pre, fin, pay = {}, {}, {}
-    for _, r in df.iterrows():
-        v = place_prob(r["odds"])
-        if v is None:
-            continue
-        (fin if r["source"] == "turnmark_final" else pre)[r["race_id"]] = v
-        if r["payouts"] is not None and r["race_id"] not in pay:
-            d = _json.loads(r["payouts"]) if isinstance(r["payouts"], str) else r["payouts"]
-            pay[r["race_id"]] = {int(str(e["combination"]).strip()): float(e["amount"] or 0)
-                                 for e in (d.get("place") or []) if str(e.get("combination", "")).strip().isdigit()}
+    eng = get_engine()
+    with eng.connect() as con:
+        # 締切前オッズを取れているレースだけが対象（全期間を読むとメモリが足りない）
+        ids = [r[0] for r in con.execute(_text(
+            "SELECT DISTINCT race_id FROM odds_snapshots WHERE bet_type='3t' AND source='official_web'"))]
+        if not ids:
+            typer.echo("締切前の3連単オッズがまだありません（official_web）。")
+            raise typer.Exit(1)
+        typer.echo(f"締切前オッズのあるレース: {len(ids)}R。1件ずつ突合します…")
+        pre, fin, pay = {}, {}, {}
+        for k in range(0, len(ids), 200):                   # 200件ずつ（メモリ対策）
+            chunk = ids[k:k + 200]
+            ph = ",".join(str(int(x)) for x in chunk)
+            for rid, src, js in con.execute(_text(
+                    f"SELECT race_id, source, odds FROM odds_snapshots WHERE bet_type='3t' "
+                    f"AND race_id IN ({ph}) AND source IN ('official_web','turnmark_final') ORDER BY captured_at")):
+                v = place_prob(js)
+                if v is not None:
+                    (fin if src == "turnmark_final" else pre)[rid] = v
+            for rid, js in con.execute(_text(f"SELECT race_id, payouts FROM results WHERE race_id IN ({ph})")):
+                d = _json.loads(js) if isinstance(js, str) else js
+                if not isinstance(d, dict):
+                    continue
+                pay[rid] = {int(str(e["combination"]).strip()): float(e["amount"] or 0)
+                            for e in (d.get("place") or []) if str(e.get("combination", "")).strip().isdigit()}
     both = sorted(set(pre) & set(fin))
-    typer.echo(f"締切前 {len(pre)}R / 確定 {len(fin)}R / 突合 {len(both)}R（閾値 {threshold}）")
+    typer.echo(f"締切前 {len(pre)}R / うち確定も揃った {len(both)}R（閾値 {threshold}）")
     if len(both) < 20:
-        typer.echo("突合できたレースが少なすぎます。数日ぶん貯めてから再実行してください。")
+        typer.echo("突合できたレースが少なすぎます。確定オッズは翌朝06:10に入るので、数日ぶん貯めてから再実行してください。")
         raise typer.Exit(1)
     a = np.array([pre[r] for r in both])
     b = np.array([fin[r] for r in both])
@@ -393,21 +400,15 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
     pa, pb = ca >= threshold, cb >= threshold
     inter = int((pa & pb).sum())
     typer.echo(f"  買い対象レース: 締切前基準 {int(pa.sum())}R / 確定基準 {int(pb.sum())}R / 共通 {inter}R")
-    if pb.sum():
-        typer.echo(f"  確定基準で買うべきレースのうち締切前でも選べた割合: {inter / max(int(pb.sum()), 1)*100:.1f}%")
-    if pa.sum():
-        typer.echo(f"  締切前基準で買ったレースが確定基準でも妥当だった割合: {inter / max(int(pa.sum()), 1)*100:.1f}%")
-    # 締切前の選定で実際に買った場合の成績（結果が揃っているものだけ）
-    ret, n = [], 0
-    for k, r in enumerate(both):
-        if not pa[k] or r not in pay or not pay[r]:
-            continue
-        n += 1
-        ret.append(pay[r].get(int(sa[k]) + 1, 0.0))
-    if n:
+    if int(pb.sum()):
+        typer.echo(f"  確定基準で買うべきレースのうち締切前でも選べた割合: {inter / int(pb.sum())*100:.1f}%")
+    if int(pa.sum()):
+        typer.echo(f"  締切前基準で買ったレースが確定基準でも妥当だった割合: {inter / int(pa.sum())*100:.1f}%")
+    ret = [pay[r].get(int(sa[k]) + 1, 0.0) for k, r in enumerate(both) if pa[k] and pay.get(r)]
+    if ret:
         ret = np.array(ret)
-        typer.echo(f"  締切前の選定で複勝1点100円: n={n} 的中{(ret > 0).mean()*100:.1f}% "
-                   f"回収{ret.sum()/(100*n)*100:.1f}% 元返し{(ret == 100).mean()*100:.1f}%")
+        typer.echo(f"  締切前の選定で複勝1点100円: n={len(ret)} 的中{(ret > 0).mean()*100:.1f}% "
+                   f"回収{ret.sum()/(100*len(ret))*100:.1f}% 元返し{(ret == 100).mean()*100:.1f}%")
         typer.echo("  ※本数が少ないうちは回収率は大きく振れます。見るべきは上の一致率の方です。")
 
 
