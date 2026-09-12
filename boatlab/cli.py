@@ -648,6 +648,7 @@ def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer
                 if not _re.fullmatch(r"\d", v) and not _re.fullmatch(r"\d+\.\d+", v) and not _re.fullmatch(r"\d{2,}", v):
                     k = f"text={v[:20]!r} html={cell.strip()[:70]!r}"
                     odd_cells[k] = odd_cells.get(k, 0) + 1
+    top = sorted(odd_cells.items(), key=lambda x: -x[1])[:25]
     typer.echo("  艇番でも数値でもないセル（出現回数）:")
     for k, n in top:
         typer.echo(f"    ×{n}  {k}")
