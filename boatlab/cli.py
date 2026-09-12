@@ -520,3 +520,80 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
             for x in skipped[-5:]:
                 typer.echo(f"    {STADIUMS.get(x['stadium_code'])} {x['race_no']:>2}R {str(x['closed_at'])[11:16]}  "
                            f"{x['skip_reason']}  参考{int(x['stake'] or 0):,}円  {x['rationale_text'] or ''}")
+
+
+@app.command()
+def why_estimated(stadium: int = typer.Option(..., "--stadium"), race: int = typer.Option(..., "--race"),
+                  day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日）")):
+    """あるレースの確定予想が「実オッズ未取得」になった理由を、DBの中身から切り分ける。
+
+    見るもの: 公式3連単オッズの記録（あるか・いつか・何通りか）、確定予想の時刻と odds_snapshot_id、
+    そして predict_pending と同じ照合を再実行して、どの条件で落ちたか。"""
+    import json as _json
+    from datetime import date as _date
+
+    import numpy as np
+    from sqlalchemy import text as _text
+
+    from boatlab.config import STADIUMS
+    from boatlab.model.trifecta import PERM_LABELS as _PL
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    d = _date.fromisoformat(day) if day else now_jst().date()
+    rid = int(f"{d:%Y%m%d}{stadium:02d}{race:02d}")
+    eng = get_engine()
+    typer.echo(f"{STADIUMS.get(stadium)} {race}R  race_id={rid}  現在 {now_jst():%H:%M} JST")
+    with eng.connect() as c:
+        r = c.execute(_text("SELECT id, closed_at FROM races WHERE id=:r"), {"r": rid}).fetchone()
+        if not r:
+            typer.echo("  races に無い（race_id の作り方が違う？）")
+            same = c.execute(_text("SELECT id, race_no FROM races WHERE race_date=:d AND stadium_code=:s ORDER BY race_no"),
+                             {"d": str(d), "s": stadium}).fetchall()
+            typer.echo("  同じ場のID:", [x[0] for x in same][:3])
+            raise typer.Exit()
+        typer.echo(f"  締切 {r[1]}")
+        snaps = c.execute(_text("SELECT id, source, bet_type, captured_at, odds FROM odds_snapshots WHERE race_id=:r "
+                                "ORDER BY captured_at"), {"r": rid}).fetchall()
+        typer.echo(f"  オッズ記録 {len(snaps)}件:")
+        for sid, src, bt, cap, od in snaps:
+            od = _json.loads(od) if isinstance(od, str) else od
+            keys = list((od or {}).keys())
+            fin = sum(1 for k in _PL if (od or {}).get(k) not in (None, 0, "") and _finite((od or {}).get(k)))
+            typer.echo(f"    id={sid} {src} {bt} {cap}  キー数={len(keys)} 例={keys[:2]}  PERM_LABELS と一致する有限値={fin}/120")
+        preds = c.execute(_text("SELECT id, role, stage, created_at, odds_snapshot_id, flags, decision, skip_reason "
+                                "FROM predictions WHERE race_id=:r ORDER BY created_at"), {"r": rid}).fetchall()
+        typer.echo(f"  予想 {len(preds)}件:")
+        for pid, role, stage, cat, osid, flags, dec, why in preds:
+            fl = _json.loads(flags) if isinstance(flags, str) else (flags or {})
+            typer.echo(f"    id={pid} {role}/{stage} {cat}  odds_snapshot_id={osid}  odds_estimated={fl.get('odds_estimated')}  {dec} {why or ''}")
+        # predict_pending と同じ照合を、確定予想の時刻を now として再実行
+        fin_preds = [p for p in preds if p[2] == "final" and p[1] == "active"]
+        if fin_preds:
+            from datetime import datetime as _dt
+            now = fin_preds[0][3]
+            now = _dt.fromisoformat(str(now)) if not isinstance(now, _dt) else now
+            typer.echo(f"  照合の再実行（now=確定予想の時刻 {now}）:")
+            ok = False
+            for sid, src, bt, cap, od in snaps:
+                if src != "official_web" or bt != "3t":
+                    continue
+                cap_dt = _dt.fromisoformat(str(cap)) if not isinstance(cap, _dt) else cap
+                age = (now - cap_dt).total_seconds()
+                od = _json.loads(od) if isinstance(od, str) else od
+                arr = np.array([np.nan if (od or {}).get(k) is None else float(od[k]) for k in _PL])
+                fin = int(np.isfinite(arr).sum())
+                verdict = "採用" if (age <= 900 and fin >= 100) else ("15分より古い" if age > 900 else "有限値が100未満")
+                typer.echo(f"    id={sid} 取得から {age/60:.1f}分  有限値 {fin}/120 → {verdict}")
+                ok = ok or verdict == "採用"
+            if not ok:
+                typer.echo("  → この予想の時点で採用できる official_web の3連単オッズが無かった")
+        else:
+            typer.echo("  確定予想（active/final）が無い")
+
+
+def _finite(v) -> bool:
+    try:
+        import math
+        return math.isfinite(float(v))
+    except Exception:
+        return False
