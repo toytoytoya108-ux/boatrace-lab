@@ -426,3 +426,85 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日）"),
+          stadium: int = typer.Option(0, "--stadium"), race: int = typer.Option(0, "--race")):
+    """3モード（穴・堅い・複勝単勝）の記録を表示する。--stadium/--race を付けると、その1レースについて
+    最新の公式3連単オッズから今この瞬間の選定を計算して見せる（記録はしない・動作確認用）。"""
+    import json as _json
+    from datetime import date as _date
+
+    import numpy as np
+    from sqlalchemy import text as _text
+
+    from boatlab.config import STADIUMS
+    from boatlab.model.modes import MEASURED, ModeParams, market_probs, market_summary, select_ana, select_place
+    from boatlab.model.trifecta import PERM_LABELS as _PL
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    eng = get_engine()
+    d = _date.fromisoformat(day) if day else now_jst().date()
+    with eng.connect() as c:
+        row = c.execute(_text("SELECT extra FROM settings_versions ORDER BY id DESC LIMIT 1")).fetchone()
+    extra = row[0] if row else None
+    if isinstance(extra, str):
+        try:
+            extra = _json.loads(extra)
+        except Exception:
+            extra = None
+    prm = ModeParams.from_dict((extra or {}).get("modes"))
+    if stadium and race:
+        rid = int(f"{d:%Y%m%d}{stadium:02d}{race:02d}")
+        with eng.connect() as c:
+            o = c.execute(_text("SELECT odds, captured_at FROM odds_snapshots WHERE race_id=:r AND bet_type='3t' "
+                                "AND source='official_web' ORDER BY captured_at DESC LIMIT 1"), {"r": rid}).fetchone()
+        if not o:
+            typer.echo(f"{STADIUMS.get(stadium)} {race}R: 公式3連単オッズの取得記録がありません（締切6〜12分前に取得されます）")
+            raise typer.Exit()
+        od = _json.loads(o[0]) if isinstance(o[0], str) else o[0]
+        arr = np.array([np.nan if od.get(k) is None else float(od[k]) for k in _PL])
+        q = market_probs(arr)
+        ms = market_summary(q) if q is not None else None
+        typer.echo(f"{STADIUMS.get(stadium)} {race}R  オッズ取得 {o[1]}  有効 {int(np.isfinite(arr).sum())}/120")
+        if ms is None:
+            typer.echo("  オッズが100通り未満で市場確率を作れません")
+            raise typer.Exit()
+        typer.echo(f"  市場: 万舟確率 {ms['q_man']:.3f}（穴の条件 ≥{prm.ana_qman_min}）"
+                   f"  1着最大 {ms['q1_max']:.3f}（{ms['q1_arg']+1}号艇、単勝の条件 ≥{prm.tansho_q_min}）"
+                   f"  2着以内最大 {ms['q2_max']:.3f}（{ms['q2_arg']+1}号艇、複勝の条件 ≥{prm.fukusho_q_min}）")
+        a = select_ana(arr, prm)
+        typer.echo(f"  穴狙い: {'発火 ' + str(len(a['points'])) + '点 ' + ' '.join(_PL[i] for i in a['points'][:6]) + ' …' if a['fired'] else '見送り（' + str(a['reason']) + '）'}")
+        pl = select_place(arr, prm)
+        typer.echo(f"  複勝: {'発火 ' + str(pl['fukusho']['lane']) + '号艇' if pl['fukusho']['fired'] else '見送り'}"
+                   f"  単勝: {'発火 ' + str(pl['tansho']['lane']) + '号艇' if pl['tansho']['fired'] else '見送り'}")
+        typer.echo("  堅い予想はモデルの本線が要るので、記録（下の一覧）で確認してください")
+        raise typer.Exit()
+    typer.echo(f"{d} の3モード記録（確定予想・仮想）")
+    with eng.connect() as c:
+        rows = c.execute(_text("""
+            SELECT p.role, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.rationale_text,
+                   (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id=p.id) stake,
+                   sc.valid, sc.hit, sc.pnl
+            FROM predictions p JOIN races r ON r.id=p.race_id LEFT JOIN scoring sc ON sc.prediction_id=p.id
+            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ana','katai','place')
+            ORDER BY p.role, r.closed_at""" ), {"d": str(d)}).mappings().all()
+    if not rows:
+        typer.echo("  記録なし（確定予想は各レースの締切4〜10分前に保存されます）")
+        raise typer.Exit()
+    for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("place", "複勝・単勝")):
+        rs = [x for x in rows if x["role"] == role]
+        fired = [x for x in rs if x["decision"] == "buy"]
+        scored = [x for x in fired if x["valid"]]
+        stake = sum(int(x["stake"] or 0) for x in fired)
+        pnl = sum(int(x["pnl"] or 0) for x in scored)
+        m = MEASURED.get(role) or MEASURED["fukusho"]
+        typer.echo(f"\n[{nm}] 記録 {len(rs)}R / 発火 {len(fired)}R / 投資予定 {stake:,}円"
+                   f" / 採点済 {len(scored)}R 的中 {sum(1 for x in scored if x['hit'])} 損益 {pnl:+,}円"
+                   f"   （実測の目安: 回収率 {m['roi']*100:.1f}%）")
+        for x in fired[:20]:
+            res = ("🎯" if x["hit"] else "外れ") + f" {int(x['pnl'] or 0):+,}円" if x["valid"] else "結果待ち"
+            typer.echo(f"  {STADIUMS.get(x['stadium_code'])} {x['race_no']:>2}R {str(x['closed_at'])[11:16]}  {int(x['stake'] or 0):>5,}円  {res}")
+        if len(fired) > 20:
+            typer.echo(f"  … 他 {len(fired)-20}R")

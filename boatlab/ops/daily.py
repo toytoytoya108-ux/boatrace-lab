@@ -24,6 +24,7 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
+from boatlab.model.modes import MODES_VERSION, ModeParams, select_ana, select_katai, select_place
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
@@ -151,6 +152,14 @@ def focused_from_settings(row: SettingsVersion) -> FocusedParams:
     return FocusedParams.from_dict((row.extra or {}).get("focused"))
 
 
+def modes_from_settings(row: SettingsVersion) -> ModeParams:
+    """設定の extra.modes（3モード表示）。無ければ既定値（2026-09-12 の実測で決めた値）。"""
+    return ModeParams.from_dict((row.extra or {}).get("modes"))
+
+
+MODE_ROLES = ("ana", "katai", "place")
+
+
 def staking_from_settings(row: SettingsVersion) -> StakingParams:
     """設定の extra.staking（無ければ均等 stake_per_point×points）。合計は points×stake_per_point に固定。"""
     d = dict((row.extra or {}).get("staking") or {})
@@ -180,6 +189,10 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
         focused_role = f"{role}_focused" if role != "active" else "focused"
         done_f = {rid for (rid,) in s.execute(select(Prediction.race_id).where(
             Prediction.model_version == predictor.version, Prediction.stage == stage, Prediction.role == focused_role))}
+        modes = modes_from_settings(srow)
+        done_m = {mr: {rid for (rid,) in s.execute(select(Prediction.race_id).where(
+            Prediction.model_version == predictor.version, Prediction.stage == stage,
+            Prediction.role == (mr if role == "active" else f"{role}_{mr}")))} for mr in MODE_ROLES}
     targets = []
     for r in races:
         if r.id in done or r.closed_at is None:
@@ -262,10 +275,111 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
                                               stake=int(stk), prob=float(parr[j]),
                                               odds_at_pred=(None if not np.isfinite(oarr[j]) else float(oarr[j])),
                                               odds_source=o["odds_source"], ev=float(f.ev[j])))
+            # ---- 3モード（穴・堅い・複勝単勝）。確定予想のみ。市場ベースなので推定オッズでは動かさない
+            if stage == "final" and role == "active":
+                _record_modes(s, o, r, predictor.version, settings_id, now, odds_by_race, modes, done_m)
     return {"predicted": n, "stage": stage, "date": str(d)}
 
 
+def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now: datetime,
+                  odds_by_race: dict, prm: ModeParams, done_m: dict) -> None:
+    """3モードを role='ana'/'katai'/'place' として predictions に追記する（追記専用・自動購入なし）。
+
+    穴・複勝単勝は市場のオッズだけで選ぶので、公式オッズが無い（推定）ときは skip として記録する。
+    堅いは本体の本線の並び（モデル確率順）＋保証つき配分。"""
+    rid = o["race_id"]
+    real = not bool(o["flags"].get("odds_estimated"))
+    oarr = np.array([np.nan if o["odds_used"][k] is None else float(o["odds_used"][k]) for k in _PL])
+    main_idx = [combo_index(x["combo"]) for x in sorted(o["selections"], key=lambda x: x["rank"]) if x["kind"] == "main"]
+    common = dict(race_id=rid, model_version=model_version, settings_id=settings_id, stage="final",
+                  created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at, features_used=None,
+                  odds_snapshot_id=odds_by_race.get(rid, (None,))[0], completeness=o["completeness"],
+                  missing_fields=None, boat_eval=o["boat_eval"], probs=o["probs"], odds_used=o["odds_used"],
+                  ev=o["ev"], confidence=o["confidence"], rationale=o["rationale"], input_hash=o["input_hash"])
+
+    def _add(role: str, fired: bool, reason: str | None, flags: dict, sels: list[dict], text: str, er: float = 0.0):
+        p = Prediction(**common, role=role, expected_return=er, decision=("buy" if fired else "skip"),
+                       skip_reason=(None if fired else reason),
+                       flags={**o["flags"], "mode": role, "modes_version": MODES_VERSION, "params": prm.to_dict(), **flags},
+                       rationale_text=text)
+        s.add(p)
+        s.flush()
+        for k, x in enumerate(sels):
+            s.add(PredictionSelection(prediction_id=p.id, combo=x["combo"], rank=k + 1, kind=x["kind"],
+                                      stake=int(x["stake"]), prob=x.get("prob"), odds_at_pred=x.get("odds"),
+                                      odds_source=o["odds_source"], ev=None))
+
+    if rid not in done_m["ana"]:
+        a = select_ana(oarr, prm) if real else dict(fired=False, reason="odds_estimated", points=[], stakes=[])
+        _add("ana", a["fired"], a["reason"],
+             dict(q_man=a.get("q_man"), n_points=len(a["points"]), stake_total=int(sum(a["stakes"]))),
+             [dict(combo=_PL[j], kind="ana", stake=st, prob=q, odds=od)
+              for j, st, q, od in zip(a["points"], a["stakes"], a.get("q", []), a.get("odds", []))],
+             (f"穴狙い: 市場の万舟確率 {a.get('q_man', 0):.3f}・人気{prm.ana_rank_lo}〜{prm.ana_rank_hi}番目 {len(a['points'])}点"
+              if a["fired"] else f"穴狙い: 見送り（{a['reason']}）"))
+    if rid not in done_m["katai"]:
+        k = select_katai(main_idx, oarr, float(o["confidence"]), prm) if real else \
+            dict(fired=False, reason="odds_estimated", points=[], stakes=[])
+        _add("katai", k["fired"], k["reason"],
+             dict(n_points=len(k["points"]), stake_total=int(k.get("stake_total", 0)), min_payout=k.get("min_payout")),
+             [dict(combo=_PL[j], kind="katai", stake=st, prob=float(o["probs"][_PL[j]]), odds=od)
+              for j, st, od in zip(k["points"], k["stakes"], k.get("odds", []))],
+             (f"堅い予想: 本線{len(k['points'])}点・{k.get('stake_total', 0)}円（当たれば{k.get('min_payout')}円以上）"
+              if k["fired"] else f"堅い予想: 見送り（{k['reason']}）"))
+    if rid not in done_m["place"]:
+        pl = select_place(oarr, prm) if real else dict(fukusho=dict(fired=False, reason="odds_estimated"),
+                                                      tansho=dict(fired=False, reason="odds_estimated"))
+        fk, tn = pl["fukusho"], pl["tansho"]
+        fired = bool(fk["fired"] or tn["fired"])
+        sels = ([dict(combo=str(fk["lane"]), kind="fukusho", stake=fk["stake"], prob=fk["q"], odds=None)] if fk["fired"] else []) + \
+               ([dict(combo=str(tn["lane"]), kind="tansho", stake=tn["stake"], prob=tn["q"], odds=None)] if tn["fired"] else [])
+        _add("place", fired, (None if fired else (fk.get("reason") or "q_low")),
+             dict(fukusho=fk, tansho=tn, n_points=len(sels), stake_total=int(sum(x["stake"] for x in sels))),
+             sels,
+             ("複勝・単勝: " + "、".join(
+                 ([f"複勝 {fk['lane']}号艇（市場の2着以内確率 {fk['q']:.3f}）"] if fk["fired"] else []) +
+                 ([f"単勝 {tn['lane']}号艇（市場の1着確率 {tn['q']:.3f}）"] if tn["fired"] else []))
+              if fired else f"複勝・単勝: 見送り（{fk.get('reason') or 'q_low'}）"))
+
+
 # ---------------------------------------------------------------- score
+def _payout_amount(payouts: dict | None, key: str, lane: int) -> float:
+    """公式の確定配当（100円あたり）。当たっていなければ 0。"""
+    for e in (payouts or {}).get(key) or []:
+        try:
+            if int(str(e.get("combination", "")).strip()) == lane:
+                return float(e.get("amount") or 0)
+        except Exception:
+            continue
+    return 0.0
+
+
+def score_place(sels, payouts: dict | None, refund_lanes: list, cancelled: bool = False,
+                has_result: bool = True) -> dict:
+    """複勝・単勝の採点。kind='fukusho' は payouts['place']、'tansho' は payouts['win']。
+    返還艇の買い目は投資から除外。"""
+    if cancelled or not has_result or not isinstance(payouts, dict):
+        return dict(valid=False, hit=None, hit_kind=None, stake_total=0, payout_total=0, pnl=0,
+                    refunded_points=0, refunded_stake=0)
+    refund = {int(l) for l in (refund_lanes or [])}
+    stake_total = payout_total = ref_pts = ref_stake = 0
+    hit_kind = None
+    for x in sels:
+        lane = int(str(x.combo).strip())
+        if lane in refund:
+            ref_pts += 1
+            ref_stake += int(x.stake)
+            continue
+        stake_total += int(x.stake)
+        amt = _payout_amount(payouts, "place" if x.kind == "fukusho" else "win", lane)
+        if amt > 0:
+            payout_total += int(round(amt * int(x.stake) / 100))
+            hit_kind = hit_kind or x.kind
+    return dict(valid=True, hit=payout_total > 0, hit_kind=hit_kind, stake_total=stake_total,
+                payout_total=payout_total, pnl=payout_total - stake_total,
+                refunded_points=ref_pts, refunded_stake=ref_stake)
+
+
 def score_pending() -> dict:
     n = 0
     with session_scope() as s:
@@ -287,11 +401,18 @@ def score_pending() -> dict:
             elif r.status == "cancelled":
                 invalid = "cancelled"
             tri = combo_index(res.trifecta) if res.trifecta else None
-            sel_idx = [combo_index(x.combo) for x in sels]
-            main_idx = [combo_index(x.combo) for x in sels if x.kind == "main"]
-            stakes = [int(x.stake) for x in sels]
-            sc = score_race(sel_idx, main_idx, -1 if tri is None else tri, res.trifecta_payout, res.refunds or [],
-                            sels[0].stake if sels else 200, cancelled=(r.status == "cancelled"), stakes=stakes or None)
+            mode = (p.flags or {}).get("mode")
+            if mode == "place":
+                sc = score_place(sels, res.payouts, res.refunds or [], cancelled=(r.status == "cancelled"),
+                                 has_result=bool(res.trifecta))
+            else:
+                sel_idx = [combo_index(x.combo) for x in sels]
+                main_idx = [combo_index(x.combo) for x in sels if x.kind == "main"]
+                stakes = [int(x.stake) for x in sels]
+                sc = score_race(sel_idx, main_idx, -1 if tri is None else tri, res.trifecta_payout, res.refunds or [],
+                                sels[0].stake if sels else 200, cancelled=(r.status == "cancelled"), stakes=stakes or None)
+                if mode in ("ana", "katai") and sc.get("hit"):
+                    sc["hit_kind"] = mode
             valid = invalid is None and sc["valid"]
             hit = sc["hit"] if valid else None
             cat = None

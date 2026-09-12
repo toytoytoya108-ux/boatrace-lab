@@ -62,7 +62,7 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 </head>
 <body>
 <div class="app" id="app">
-  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="focused">絞り込み型<small>推奨用</small></button><button data-m="std">15点固定<small>比較用</small></button></div></header>
+  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ana">穴狙い<small>3連単</small></button><button data-m="katai">堅い予想<small>3連単</small></button><button data-m="place">複勝・単勝<small>的中率重視</small></button></div></header>
   <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
   <main id="main"></main>
 </div>
@@ -86,12 +86,39 @@ const state = Object.assign({ view: "home", raceId: null, day: null, mode: "focu
 const F_DEFAULT = { stadium: "", dec: "buy", res: "", cmin: 0, evmin: 0, sort: "time" };
 function resetF(partial) { state.f = Object.assign({}, F_DEFAULT, partial || {}); persist(); }
 function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, rv: state.rv, statsBy: state.statsBy })); } catch (e) {} }
-const REASON = { confidence: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得", low_agreement: "モデル不一致", no_value_points: "妙味のある買い目なし", odds_estimated: "実オッズ未取得" };
-const MODE_ROLE = { std: "active", focused: "focused" };
-const MODE_NAME = { std: "15点固定", focused: "絞り込み型" };
-const MODE_DESC = { focused: "推奨用。自信のあるレースだけ、妙味のある買い目を最大5点", std: "比較用。全レース本線10点＋穴5点を仮想記録（推奨はほぼ出ません）" };
-const OTHER = m => m === "focused" ? "std" : "focused";
-function modeBar() { return `<div class="modeBar"><div class="t"><b>${MODE_NAME[state.mode]}</b> <span class="muted">を表示中</span><small>${MODE_DESC[state.mode]}</small></div><button onclick="setMode('${OTHER(state.mode)}')">${MODE_NAME[OTHER(state.mode)]}に切替</button></div>`; }
+const REASON = { confidence: "信頼度が基準未満", confidence_low: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得", low_agreement: "モデル不一致", no_value_points: "妙味のある買い目なし", odds_estimated: "実オッズ未取得", odds_missing: "実オッズ未取得", q_man_low: "市場が荒れると見ていない", q_low: "市場の確信度が基準未満", too_few_points: "保証できる点数が3点未満", no_guarantee: "当たっても投資額を下回る", disabled: "設定で停止中" };
+const MODE_ROLE = { ana: "ana", katai: "katai", place: "place", std: "active", focused: "focused" };
+const MODE_NAME = { ana: "3連単（穴狙い）", katai: "3連単（堅い予想）", place: "複勝・単勝", std: "15点固定（旧）", focused: "絞り込み型（旧）" };
+const MODE_DESC = {
+  ana: "市場が荒れると見ているレース（万舟確率が上位10%）だけ、人気20〜40番目の3連単21点を100円ずつ",
+  katai: "本線（モデル確率順）を「当たれば必ず投資額以上」が成り立つ点数まで削って買う。信頼度0.70以上のレースのみ",
+  place: "市場がいちばん確信している艇を1点。複勝は2着以内確率0.90以上、単勝は1着確率0.771以上のレースのみ",
+  std: "旧・比較用。全レース本線10点＋穴5点を裏で仮想記録", focused: "旧・比較用。自信のあるレースだけ最大5点" };
+const MAIN_MODES = ["ana", "katai", "place"];
+const LEGACY = ["std", "focused"];
+if (!MAIN_MODES.includes(state.mode)) state.mode = "place";   // 起動時は3モードのどれか（旧モードはボタンから）
+let MODES_CACHE = null;
+async function modesData() { if (!MODES_CACHE) MODES_CACHE = await api("/api/modes"); return MODES_CACHE; }
+function fmtLoss(v) { return v >= 10000 ? `約${(v / 10000).toFixed(1)}万円` : `約${fmtN(v)}円`; }
+function measuredCard(role, md) {
+  // 実測（確定オッズでの検証）を常に併記する。「当たるように見せない」ための固定表示
+  const m = md.modes[role]; if (!m) return "";
+  const rows = Object.entries(m.measured).map(([k, v]) => {
+    const nm = { ana: "穴", katai: "堅い", fukusho: "複勝", tansho: "単勝" }[k] || k;
+    return `<tr><td>${nm}</td><td class="n"><b>${fmtP(v.roi)}</b><small class="muted"> (${Math.round(v.roi_lo*100)}〜${Math.round(v.roi_hi*100)}%)</small></td><td class="n">${fmtP(v.hit)}</td><td class="n">${v.avg_payout != null ? fmtN(v.avg_payout) + "円" : "–"}</td><td class="n">${v.max_lose != null ? v.max_lose + "R" : "–"}</td><td class="n">${fmtLoss(m.expected_monthly_loss[k])}</td></tr>`;
+  }).join("");
+  const c = m.cumulative;
+  return `<div class="card"><h3>実測（過去データ・確定オッズ）</h3><div class="tbl"><table><tr><th></th><th class="n">回収率</th><th class="n">的中率</th><th class="n">平均払戻</th><th class="n">最長連敗</th><th class="n">月の期待損失</th></tr>${rows}</table></div>
+    <p class="muted">どのモードも回収率100%には届きません。連敗が最長連敗の範囲内なら想定どおりです。月の期待損失は「1日の本数 × 1レース投資 × 30日 × (1−回収率)」。</p>
+    <h3 style="margin-top:10px">このツールの記録（締切前に保存・仮想）</h3>
+    <div class="kpis">${kpi("レース", c.n)}${kpi("的中率", fmtP(c.hit_rate))}${kpi("回収率", fmtP(c.roi), (c.roi || 0) >= 1 ? "pos" : "")}${kpi("損益", fmtY(c.pnl), c.pnl >= 0 ? "pos" : "neg")}${kpi("最長連敗", c.max_lose_streak + "R")}</div>
+    <p class="muted">${c.since ? `${String(c.since).slice(0,10)} から。` : "まだ記録がありません。"}実測（確定オッズ）に近づくかを見るのがこの欄の目的です。しきい値は確定オッズで決めた値なので、締切前オッズでは発火が少なめに出ます。</p></div>`;
+}
+function modeBar() {
+  const other = MAIN_MODES.filter(x => x !== state.mode);
+  return `<div class="modeBar"><div class="t"><b>${MODE_NAME[state.mode]}</b> <span class="muted">を表示中</span><small>${MODE_DESC[state.mode]}</small></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${other.map(x => `<button onclick="setMode('${x}')">${MODE_NAME[x]}</button>`).join("")}<button class="ghost" onclick="setMode('${LEGACY.includes(state.mode) ? "place" : "focused"}')" style="opacity:.7">${LEGACY.includes(state.mode) ? "3モードへ戻る" : "旧モード（比較用）"}</button></div></div>`;
+}
 const mq = () => "mode=" + state.mode;
 
 async function api(path, opt) {
@@ -146,8 +173,8 @@ function kpi(label, val, cls="") { return `<div class="kpi"><b class="${cls}">${
 function planText(r) {
   if (!r.prediction_id) return "";
   if (r.provisional) return "確定は締切直前";
-  if (state.mode === "focused") return r.n_points ? `${r.n_points}点 ${fmtN(r.stake_plan)}円` : "候補なし";
-  return `15点 ${fmtN(r.stake_plan || 3000)}円`;
+  if (state.mode === "std") return `15点 ${fmtN(r.stake_plan || 3000)}円`;
+  return r.n_points ? `${r.n_points}点 ${fmtN(r.stake_plan)}円` : "候補なし";
 }
 function raceRow(r, compact) {
   const name = compact ? `${r.race_no}R <small style="display:inline;color:var(--ink2);font-weight:400">${r.stadium}</small>` : `${r.stadium} ${r.race_no}R`;
@@ -160,12 +187,17 @@ function raceRow(r, compact) {
     <div class="right"><div class="mono">${fmtP(r.confidence)}</div><div class="muted mono">EV ${r.expected_return != null ? r.expected_return.toFixed(2) : "–"}</div><div class="muted">${planText(r)}</div></div><div class="right">${dec}<br>${res}</div></div>`;
 }
 async function renderHome(m) {
-  const [t, s, rd, h, st] = await Promise.all([api("/api/today?" + mq()), api("/api/stats?" + mq()), api("/api/readiness?" + mq()), api("/api/health"), api("/api/settings")]);
+  const [t, s, rd, h, st, md] = await Promise.all([api("/api/today?" + mq()), api("/api/stats?" + mq()), api("/api/readiness?" + mq()), api("/api/health"), api("/api/settings"), modesData()]);
   const fc = Object.assign({ s15_min: 0.73, ev_min: 1.0, odds_lo: 5, odds_hi: 50, max_points: 5, budget: 3000 }, (st.extra || {}).focused || {});
+  const mp = md.params || {};
+  const COND = { ana: `条件：市場の万舟確率 ${mp.ana_qman_min} 以上のレース・人気${mp.ana_rank_lo}〜${mp.ana_rank_hi}番目 ${mp.ana_rank_hi - mp.ana_rank_lo + 1}点×${mp.ana_stake}円`,
+    katai: `条件：信頼度 ${mp.katai_confidence_min} 以上・本線最大${mp.katai_points_max}点・1レース予算 ${fmtN(mp.katai_budget)}円（当たれば必ず${fmtN(mp.katai_budget)}円以上）・成立が${mp.katai_points_min}点未満なら見送り`,
+    place: `条件：複勝は市場の2着以内確率 ${mp.fukusho_q_min} 以上、単勝は1着確率 ${mp.tansho_q_min} 以上・各${mp.place_stake}円` };
   $("#hdr").textContent = t.date + (t.updated && t.updated.ingest_at ? " · 更新 " + tm(t.updated.ingest_at).slice(6) : "") + (t.active_model ? " · Model " + t.active_model : " · モデル未採用");
   const d = t.day, cum = s.buy, r100 = s.recent100_buy;
   m.innerHTML = `${modeBar()}${freshLine(t.updated)}
-    <p class="muted">${state.mode === "focused" ? `いまの条件：自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点・1レース最大${fmtN(fc.budget)}円` : "条件：本線10点＋穴5点、1レース3,000円（購入候補＝信頼度と期待回収率が基準以上）"}</p>
+    <p class="muted">${COND[state.mode] || (state.mode === "focused" ? `いまの条件：自信${fmtP(fc.s15_min)}以上・期待値${fc.ev_min}以上・${fc.odds_lo}〜${fc.odds_hi}倍・最大${fc.max_points}点・1レース最大${fmtN(fc.budget)}円` : "条件：本線10点＋穴5点、1レース3,000円（購入候補＝信頼度と期待回収率が基準以上）")}</p>
+    ${MAIN_MODES.includes(state.mode) ? measuredCard(MODE_ROLE[state.mode], md) : ""}
     <div class="kpis">${kpi("レース数", t.n_races)}${kpi("推奨", t.n_buy)}${kpi("見送り", t.n_skip)}</div>
     <h2>今日の勝負レース <a href="#" class="muted" style="font-weight:400;float:right" onclick="resetF({dec:'buy'});go('races',{rv:'list'});return false">推奨をすべて見る ›</a></h2><div class="card">${t.top.length ? t.top.map(raceRow).join("") : '<p class="muted">推奨レースはまだありません（予想は締切前に確定します）</p>'}</div>
     ${t.races.length ? `<h2>今日の開催場 <a href="#" class="muted" style="font-weight:400;float:right" onclick="go('races',{rv:'stadiums'});return false">場の一覧へ ›</a></h2>
@@ -280,7 +312,8 @@ async function renderRace(m) {
   const d = await api("/api/races/" + state.raceId);
   const r = d.race, role = MODE_ROLE[state.mode];
   const p = d.predictions.find(x => x.stage === "final" && x.role === role) || d.predictions.find(x => x.role === role) || d.predictions.find(x => x.stage === "final" && x.role === "active") || d.predictions[0];
-  const other = d.predictions.find(x => x.stage === "final" && x.role === (role === "active" ? "focused" : "active"));
+  const others = d.predictions.filter(x => x.stage === "final" && x.role !== role && MAIN_MODES.concat(LEGACY).some(k => MODE_ROLE[k] === x.role));
+  const modeOf = rl => Object.keys(MODE_ROLE).find(k => MODE_ROLE[k] === rl) || "std";
   const prog = d.predictions.find(x => x.stage === "program" && x.role === "active");
   $("#hdr").textContent = `${r.stadium} ${r.race_no}R`;
   const c = d.conditions;
@@ -292,19 +325,23 @@ async function renderRace(m) {
       ${sc ? `<p>${sc.valid ? (sc.hit ? `🎯 的中！` : "外れ") : "無効: " + sc.invalid_reason}<br>投資 ${fmtN(sc.stake_total)}円 / 払戻 ${fmtN(sc.payout_total)}円 / 損益 ${fmtY(sc.pnl)} / 回収率 ${fmtP(sc.roi)}${p.decision === "skip" ? "<br><span class='muted'>見送りレース（仮に購入していた場合）</span>" : ""}</p>` : ""}</div>`;
   }
   if (p) {
-    const est = p.flags && p.flags.odds_estimated, isF = p.role === "focused";
+    const est = p.flags && p.flags.odds_estimated, isF = p.role === "focused", isPlace = p.role === "place", pm = modeOf(p.role);
     const total = p.selections.reduce((a, s) => a + s.stake, 0);
-    html += `<div class="card judge ${p.decision === "buy" ? "ok" : ""}"><div class="kpis">${kpi("信頼度", fmtP(p.confidence))}${kpi(isF ? "期待値(加重)" : "期待回収率", p.expected_return != null ? p.expected_return.toFixed(2) : "–")}${kpi(p.decision === "buy" ? "推奨" : "見送り", p.decision === "buy" ? `${p.selections.length}点 ${fmtN(total)}円` : (REASON[p.skip_reason] || p.skip_reason || ""))}</div>
-      <p class="muted">${MODE_NAME[isF ? "focused" : "std"]} · ${p.stage === "final" ? "確定予想" : "暫定予想（出走表のみ）"} · ${p.created_at.replace("T"," ").slice(0,16)} · データ完全性 ${fmtP(p.completeness)}${est ? " · <span class='pill warn'>オッズは推定値</span>" : ""}${isF && p.flags.S15 != null ? ` · 自信 ${fmtP(p.flags.S15)}` : ""}</p></div>`;
+    const extra = p.role === "ana" && p.flags.q_man != null ? ` · 市場の万舟確率 ${p.flags.q_man.toFixed(3)}` : (p.role === "katai" && p.flags.min_payout ? ` · 当たれば${fmtN(p.flags.min_payout)}円以上` : "");
+    html += `<div class="card judge ${p.decision === "buy" ? "ok" : ""}"><div class="kpis">${kpi("信頼度", fmtP(p.confidence))}${kpi(isF ? "期待値(加重)" : "期待回収率", (p.expected_return != null && !MAIN_MODES.includes(pm)) ? p.expected_return.toFixed(2) : "–")}${kpi(p.decision === "buy" ? "推奨" : "見送り", p.decision === "buy" ? `${p.selections.length}点 ${fmtN(total)}円` : (REASON[p.skip_reason] || p.skip_reason || ""))}</div>
+      <p class="muted">${MODE_NAME[pm]} · ${p.stage === "final" ? "確定予想" : "暫定予想（出走表のみ）"} · ${p.created_at.replace("T"," ").slice(0,16)} · データ完全性 ${fmtP(p.completeness)}${est ? " · <span class='pill warn'>オッズは推定値</span>" : ""}${isF && p.flags.S15 != null ? ` · 自信 ${fmtP(p.flags.S15)}` : ""}${extra}</p></div>`;
     const won = r.trifecta;
-    if (p.selections.length) {
+    if (p.selections.length && isPlace) {
+      const sc = p.scoring;
+      html += `<div class="card"><h3>買い目</h3>${p.selections.map(s => `<div class="boat"><div class="lane l${s.combo}">${s.combo}</div><div><b>${s.kind === "fukusho" ? "複勝" : "単勝"} ${s.combo}号艇</b><br><span class="muted">市場の${s.kind === "fukusho" ? "2着以内" : "1着"}確率 ${fmtP(s.prob)}</span></div><div class="right mono">${s.stake}円${sc && sc.valid ? `<br><small class="${sc.hit_kind === s.kind || (sc.hit && p.selections.length === 1) ? "pos" : "muted"}">${sc.hit_kind === s.kind || (sc.hit && p.selections.length === 1) ? "🎯" : "外れ"}</small>` : ""}</div></div>`).join("")}<p class="right muted">合計 ${fmtN(total)}円</p></div>`;
+    } else if (p.selections.length) {
       html += `<div class="card"><h3>買い目（フォーメーション順）${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${formationView(p.selections, won)}
         <details><summary>一覧で見る（確率・オッズ・期待値）</summary><div class="tbl"><table><tr><th>組</th><th class="n">金額</th><th class="n">確率</th><th class="n">オッズ</th><th class="n">期待値</th></tr>${p.selections.map(s => `<tr class="${won === s.combo ? "won" : ""}"><td class="mono">${s.combo}${s.kind === "hole" ? " <small class='muted'>穴</small>" : ""}${won === s.combo ? " 🎯" : ""}</td><td class="n">${s.stake}円</td><td class="n">${fmtP(s.prob)}</td><td class="n">${s.odds != null ? s.odds.toFixed(1) : "–"}</td><td class="n">${s.ev != null ? s.ev.toFixed(2) : "–"}</td></tr>`).join("")}</table></div></details>
         <p class="right muted">合計 ${fmtN(total)}円</p></div>`;
     } else {
       html += `<div class="card muted">この買い方では該当する買い目がありません（${REASON[p.skip_reason] || p.skip_reason || ""}）。</div>`;
     }
-    if (other) html += `<p class="muted">もう一方（${MODE_NAME[other.role === "focused" ? "focused" : "std"]}）：${other.decision === "buy" ? "推奨" : "見送り"} · ${other.selections.length}点 ${fmtN(other.selections.reduce((a, s) => a + s.stake, 0))}円${other.scoring && other.scoring.valid ? ` · ${other.scoring.hit ? "的中 " : "外れ "}${fmtY(other.scoring.pnl)}` : ""}　<a href="#" onclick="setMode('${other.role === "focused" ? "focused" : "std"}');return false">切替</a></p>`;
+    if (others.length) html += `<div class="card"><h3>他のモード</h3>${others.map(o => `<p class="muted" style="margin:4px 0">${MODE_NAME[modeOf(o.role)]}：${o.decision === "buy" ? "<b>推奨</b>" : "見送り"} · ${o.selections.length}点 ${fmtN(o.selections.reduce((a, s) => a + s.stake, 0))}円${o.scoring && o.scoring.valid ? ` · ${o.scoring.hit ? "🎯 " : "外れ "}${fmtY(o.scoring.pnl)}` : ""}　<a href="#" onclick="setMode('${modeOf(o.role)}');return false">切替</a></p>`).join("")}</div>`;
     html += `<div class="card"><h3>根拠</h3><p>${p.rationale_text || ""}</p><p class="muted">軸 ${p.rationale.axis_lane}号艇 1着確率 ${fmtP(p.rationale.axis_p_win)}・軸の3連単総確率 ${fmtP(p.rationale.axis_trifecta_mass)}・本線合計 ${fmtP(p.rationale.main_mass)}・穴合計 ${fmtP(p.rationale.hole_mass)}</p></div>`;
     const be = p.boat_eval;
     html += `<div class="card"><h3>6艇評価</h3>` + Object.keys(be).sort().map(k => { const b = be[k]; return `<div class="boat"><div class="lane l${k}">${k}</div><div><b>${b.name || ""}</b> <span class="muted">${b.klass || ""} 進入${b.course_pred}</span><br><span class="muted">勝率${b.nat_win_rate ?? "–"} 当地${b.loc_win_rate ?? "–"} ST${b.avg_st ?? "–"} 機${b.motor_rate2 ?? "–"}% 展示${b.exhibition_time ?? "–"}(${b.exhibition_rank ?? "–"}位) 展示ST${b.st_exh ?? "–"}<br>コース別1着率(2年) ${fmtP(b.course_win_rate_2y)} n=${b.course_n_2y ?? 0} · 当地同コース ${fmtP(b.stadium_course_win_rate)} n=${b.stadium_course_n ?? 0} · 場基準 ${fmtP(b.stadium_course_base_1y)}</span></div><div class="right mono">${fmtP(b.p_win)}<br><small class="muted">${fmtP(b.p_top3)}</small></div></div>`; }).join("") + `</div>`;

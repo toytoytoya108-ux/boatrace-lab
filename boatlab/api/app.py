@@ -72,7 +72,7 @@ def _q(sql: str, **params) -> list[dict]:
     return out
 
 
-ROLE_OF_MODE = {"std": "active", "focused": "focused"}
+ROLE_OF_MODE = {"std": "active", "focused": "focused", "ana": "ana", "katai": "katai", "place": "place"}
 
 
 def _role(mode: str | None) -> str:
@@ -462,6 +462,67 @@ def status(_=Depends(require_auth)):
             "poolgap": {"picks": int(pg[0]["n"] or 0), "races": int(pg[0]["races"] or 0)},
             "predictions": {"final": int(pred[0]["n"] or 0), "estimated_odds": int(pred[0]["est"] or 0)},
             "jobs": jobs, "fetch_failures_24h": fail, "freshness": _freshness(day)}
+
+
+@app.get("/api/modes")
+def modes(d: str | None = None, _=Depends(require_auth)):
+    """3モード（穴・堅い・複勝単勝）の今日の状況と累計。画面の頭に出す実測値も同梱する。
+
+    実測値は確定オッズでの検証（`reports/backtest/*.md`）。累計は本ツールが締切前に記録した仮想収支。
+    2つは別物で、後者が前者に近づくかを見るのがこの画面の目的。"""
+    from boatlab.model.modes import MEASURED, MODES_VERSION, ModeParams
+    day = date.fromisoformat(d) if d else now_jst().date()
+    mv = _active_version()
+    st = _settings()
+    prm = ModeParams.from_dict((st.get("extra") or {}).get("modes")).to_dict()
+    out = {"date": str(day), "modes_version": MODES_VERSION, "params": prm, "modes": {}}
+    for role in ("ana", "katai", "place"):
+        today_rows = _q("""
+            SELECT r.id, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.flags, p.rationale_text,
+                   (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,
+                   (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS stake_plan,
+                   sc.valid, sc.hit, sc.hit_kind, sc.pnl, sc.stake_total, sc.payout_total, res.trifecta
+            FROM predictions p JOIN races r ON r.id = p.race_id
+            LEFT JOIN scoring sc ON sc.prediction_id = p.id
+            LEFT JOIN results res ON res.race_id = r.id
+            WHERE r.race_date = :d AND p.stage = 'final' AND p.role = :role AND (:mv IS NULL OR p.model_version = :mv)
+            ORDER BY r.closed_at, r.stadium_code, r.race_no""", d=str(day), role=role, mv=mv)
+        for r in today_rows:
+            r["stadium"] = STADIUMS.get(r["stadium_code"])
+        cum = _q("""
+            SELECT COUNT(*) AS n, SUM(CASE WHEN sc.hit THEN 1 ELSE 0 END) AS hits,
+                   SUM(sc.stake_total) AS stake, SUM(sc.payout_total) AS payout,
+                   MIN(r.race_date) AS since
+            FROM predictions p JOIN scoring sc ON sc.prediction_id = p.id JOIN races r ON r.id = p.race_id
+            WHERE p.stage = 'final' AND p.role = :role AND p.decision = 'buy' AND sc.valid = 1
+              AND (:mv IS NULL OR p.model_version = :mv)""", role=role, mv=mv)
+        streak = _q("""
+            SELECT sc.hit FROM predictions p JOIN scoring sc ON sc.prediction_id = p.id JOIN races r ON r.id = p.race_id
+            WHERE p.stage = 'final' AND p.role = :role AND p.decision = 'buy' AND sc.valid = 1
+              AND (:mv IS NULL OR p.model_version = :mv) ORDER BY r.closed_at""", role=role, mv=mv)
+        best = cur = 0
+        for x in streak:
+            cur = 0 if x["hit"] else cur + 1
+            best = max(best, cur)
+        c = cum[0] if cum else {}
+        n, hits = int(c.get("n") or 0), int(c.get("hits") or 0)
+        stake, payout = int(c.get("stake") or 0), int(c.get("payout") or 0)
+        fired = [r for r in today_rows if r["decision"] == "buy"]
+        meas = MEASURED.get(role) or MEASURED.get("fukusho")
+        meas_all = {"fukusho": MEASURED["fukusho"], "tansho": MEASURED["tansho"]} if role == "place" else {role: meas}
+        # 月の期待損失 = (1 − 実測回収率) × 1レース投資 × 1日の本数 × 30日
+        exp_loss = {k: int(round((1 - m["roi"]) * m["stake_per_race"] * m["per_day"] * 30)) for k, m in meas_all.items()}
+        out["modes"][role] = {
+            "measured": meas_all, "expected_monthly_loss": exp_loss,
+            "today": {"n_recorded": len(today_rows), "n_fired": len(fired),
+                      "stake_plan": sum(int(r["stake_plan"] or 0) for r in fired),
+                      "scored": sum(1 for r in fired if r["valid"]), "hits": sum(1 for r in fired if r["valid"] and r["hit"]),
+                      "pnl": sum(int(r["pnl"] or 0) for r in fired if r["valid"]), "races": today_rows},
+            "cumulative": {"n": n, "hits": hits, "hit_rate": (hits / n if n else None), "stake": stake, "payout": payout,
+                           "roi": (payout / stake if stake else None), "pnl": payout - stake, "max_lose_streak": best,
+                           "since": c.get("since")},
+        }
+    return out
 
 
 @app.get("/api/backtests")

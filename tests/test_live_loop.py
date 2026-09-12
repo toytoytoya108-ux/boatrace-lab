@@ -62,8 +62,26 @@ def test_train_predict_score(tmp_path, monkeypatch):
             assert fp.flags.get("mode") == "focused" and fp.decision in ("buy", "skip")
             n_buy += fp.decision == "buy"
         assert n_buy < len(fps)  # 全部買いにはならない（絞り込み）
+    # 3モード（穴・堅い・複勝単勝）も確定予想と同時に記録される。市場ベースの2つは
+    # 実オッズが無いレースでは skip（odds_estimated）として残る＝黙って欠ける記録は無い
+    with dbmod.session_scope() as s:
+        for role in ("ana", "katai", "place"):
+            mps = s.execute(select(Prediction).where(Prediction.model_version == "test-0.1", Prediction.role == role)).scalars().all()
+            assert len(mps) == out["predicted"], role
+            for mp in mps:
+                assert mp.flags.get("mode") == role and mp.decision in ("buy", "skip")
+                msel = s.execute(select(PredictionSelection).where(PredictionSelection.prediction_id == mp.id)).scalars().all()
+                if mp.decision == "skip":
+                    assert msel == [] and mp.skip_reason
+                elif role == "ana":
+                    assert len(msel) == 21 and all(x.stake == 100 and x.kind == "ana" for x in msel)
+                elif role == "katai":
+                    assert 3 <= len(msel) <= 10 and sum(x.stake for x in msel) <= 3000
+                    assert all(x.stake % 100 == 0 and x.kind == "katai" for x in msel)
+                else:
+                    assert 1 <= len(msel) <= 2 and all(x.kind in ("fukusho", "tansho") and x.combo in "123456" for x in msel)
     sc = daily.score_pending()
-    assert sc["scored"] == out["predicted"] * 2  # 本体＋絞り込み型
+    assert sc["scored"] == out["predicted"] * 5  # 本体＋絞り込み型＋3モード
     with dbmod.session_scope() as s:
         rows = s.execute(select(Scoring)).scalars().all()
         # 過去日シミュレーション → created_at > 締切 → 全件 invalid（リーク検査が働いている）
