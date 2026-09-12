@@ -91,7 +91,8 @@ def load():
     cols = SKILL + ["motor_rate2"]
     df[cols] = df[cols].astype(float)
     df[cols] = df[cols].fillna(df[cols].median())
-    df["motor_key"] = df["stadium_code"].astype(str) + "-" + df["motor_no"].fillna(-1).astype(int).astype(str)
+    df["motor_key"] = (df["stadium_code"].astype(str) + "-"
+                       + df["motor_no"].fillna(-1).astype(int).astype(str)).to_numpy(dtype=object)
     return df, mk
 
 
@@ -113,34 +114,52 @@ def main():
     Y[np.arange(n_r), y] = 1.0
     lane = lane_dummies(n_r)
 
-    # --- 1. 選手の腕前だけのモデル（市場オフセット無し・素の条件付きロジット）
+    # --- 1〜2. モーター効果を「交差適合」で作る
+    # 注意: 探索期間の残差から e_m を作り、その同じ探索期間で縮小定数を選ぶと、
+    # 特徴量の中に答えが入る（最初の実装がこれで、k=10 が選ばれ確認期間で市場より悪化した）。
+    # 正しくは、探索期間を時系列で K 分割し、fold j の e_m は fold≠j からだけ作る。
     S = std3(df[SKILL].values.reshape(n_r, 6, len(SKILL)))
-    Zs = np.concatenate([S, lane], 2)
-    w_skill = fit_offset(Zs[expl], np.zeros((int(expl.sum()), 6)), Y[expl])
-    P_skill = predict(Zs, np.zeros((n_r, 6)), w_skill)
-
-    # --- 2. 残差からモーター効果を縮小推定（探索期間のみ）
-    resid = (Y - P_skill)[expl].reshape(-1)
-    key = df["motor_key"].values.reshape(n_r, 6)[expl].reshape(-1)
-    g = pd.DataFrame({"k": key, "r": resid}).groupby("k")["r"].agg(["sum", "count"])
-    all_key = df["motor_key"].values.reshape(n_r, 6)
-
-    def eff_matrix(k_shrink: float) -> np.ndarray:
-        e = (g["sum"] / (g["count"] + k_shrink)).to_dict()
-        return np.vectorize(lambda s: e.get(s, 0.0))(all_key)
-
-    # 縮小定数は探索期間の対数損失で選ぶ（確認期間は一切見ない）
+    mk_arr = np.asarray(df["motor_key"].tolist(), dtype=object).reshape(n_r, 6)
     mr = std3(df["motor_rate2"].values.reshape(n_r, 6, 1))
+    K_FOLD = 5
+    ei = np.where(expl)[0]
+    fold = np.array_split(ei, K_FOLD)          # 日付順に並んでいるので時系列ブロック分割
+
+    def motor_eff(train_idx, k_shrink):
+        """train_idx のレースだけから (場,モーター) 効果を縮小推定した辞書を返す。"""
+        Zs = np.concatenate([S, lane], 2)
+        zero = np.zeros((len(train_idx), 6))
+        w = fit_offset(Zs[train_idx], zero, Y[train_idx])
+        Pk = predict(Zs[train_idx], zero, w)
+        r = (Y[train_idx] - Pk).reshape(-1)
+        kk = mk_arr[train_idx].reshape(-1)
+        gg = pd.DataFrame({"k": kk, "r": r}).groupby("k")["r"].agg(["sum", "count"])
+        return (gg["sum"] / (gg["count"] + k_shrink)).to_dict(), gg
+
+    def lookup(d, idx):
+        return np.vectorize(lambda s: d.get(s, 0.0))(mk_arr[idx])
+
+    # 縮小定数は「fold外で作った e_m」で選ぶ（これで答えの漏れが消える）
     best = None
-    for k_shrink in (10.0, 20.0, 50.0, 100.0, 200.0):
-        E = std3(eff_matrix(k_shrink)[:, :, None])
-        Z = np.concatenate([lane, mr, E], 2)
+    for k_shrink in (10.0, 20.0, 50.0, 100.0, 200.0, 400.0):
+        oof = np.zeros((n_r, 6))
+        for j in range(K_FOLD):
+            tr = np.concatenate([fold[i] for i in range(K_FOLD) if i != j])
+            d, _ = motor_eff(tr, k_shrink)
+            oof[fold[j]] = lookup(d, fold[j])
+        Eo = std3(oof[:, :, None])
+        Z = np.concatenate([lane, mr, Eo], 2)
         w = fit_offset(Z[expl], logq[expl], Y[expl])
         ll = logloss(predict(Z[expl], logq[expl], w), y[expl])
         if best is None or ll < best[0]:
-            best = (ll, k_shrink)
-    k_sel = best[1]
-    E = std3(eff_matrix(k_sel)[:, :, None])
+            best = (ll, k_shrink, oof.copy())
+    _, k_sel, oof = best
+    # 確認期間には探索期間ぜんぶから作った e_m を使う（確認期間の結果は一切使わない）
+    d_full, g = motor_eff(ei, k_sel)
+    Efull = lookup(d_full, np.arange(n_r))
+    raw = oof.copy()
+    raw[conf] = Efull[conf]
+    E = std3(raw[:, :, None])
 
     # --- 3. 市場をオフセットにした比較
     models = {
@@ -153,7 +172,7 @@ def main():
          "公表モーター2連率は「誰が乗ったか」に汚染されている。選手の腕前を先に説明した"
          "**残差**からモーター効果を縮小推定し、公表値を条件づけた上での上積みを測る。\n",
          f"探索 〜{EXPLORE_END}（{int(expl.sum()):,}R）で推定、確認期間（{int(conf.sum()):,}R）で1回だけ評価。",
-         f"縮小定数 k は探索期間の対数損失で選択 → **k={k_sel:g}**（場×モーター {g.shape[0]:,}種、"
+         f"縮小定数 k は探索期間を5分割した**fold外**の e_m で選択 → **k={k_sel:g}**（場×モーター {g.shape[0]:,}種、"
          f"1モーターあたり平均 {g['count'].mean():.1f} 出走）\n",
          "## 1. 市場をオフセットにしたときの上積み（確認期間の1着対数損失）\n",
          "| モデル | 確認 対数損失 | 市場との差 |", "|---|---:|---:|"]
@@ -169,9 +188,10 @@ def main():
         ll = logloss(P[conf], y[conf])
         res[nm] = (w, P, ll)
         L.append(f"| {nm} | {ll:.4f} | {ll - ll_mkt:+.4f} |")
-    w3 = res["M3 ＋分離推定したモーター効果"][0]
-    L.append(f"\nM3 の係数: 艇番5項 {np.round(w3[:5],3).tolist()}、"
-             f"公表2連率 **{w3[5]:+.4f}**、分離推定 **{w3[6]:+.4f}**\n")
+    w2, w3 = res["M2 ＋公表モーター2連率"][0], res["M3 ＋分離推定したモーター効果"][0]
+    L.append(f"\nM2 の係数: 公表2連率 **{w2[5]:+.4f}**")
+    L.append(f"M3 の係数: 公表2連率 **{w3[5]:+.4f}**、分離推定 **{w3[6]:+.4f}**")
+    L.append("（市場をオフセットに置いているので、係数が負＝市場が過大評価、正＝過小評価）\n")
 
     L += ["## 2. p/q の右尾はどこまで伸びるか（確認期間・単勝）\n",
           "| モデル | 上位 | n | 的中 | 市場確率 | 実勝率÷市場確率 | 回収率 | 95%区間 |",
