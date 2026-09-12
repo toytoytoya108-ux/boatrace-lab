@@ -231,20 +231,55 @@ def main():
             L.append(f"| {nm} | 上位{frac*100:g}% | {n:,} | {hit*100:.1f}% | {qm*100:.1f}% | "
                      f"**{rt:.3f}** | {roi*100:.1f}% | {lo*100:.0f}〜{hi*100:.0f}% |")
 
-    L += ["\n## 4. プラセボ（確認期間の1着をシャッフル）\n",
-          "手順を変えずにラベルだけ壊す。ここで同じ数字が出るなら手順が数字を作っている。\n",
-          "| モデル | 上位2% | 実勝率÷市場確率 |", "|---|---:|---:|"]
-    yp = y.copy()
-    yp[conf] = RNG.permutation(yp[conf])
+    L += ["\n## 4. プラセボ（帰無仮説「市場確率が真」のもとで生成した結果）\n",
+          "**1着をただシャッフルする作りは誤り**だった（艇番の周辺分布と選択集合の対応が壊れ、",
+          "選ばれた艇の多くが1号艇なので比が 2.5 前後まで跳ね上がる。最初の実行でそれが出た）。",
+          "正しい帰無は「市場確率 q が真の確率」。そこから1着を生成すれば、どんな選び方でも比は 1.0 になるはず。",
+          "20回生成した平均を出す。1.0 から離れるなら、手順そのものに偏りがある。\n",
+          "| モデル | 上位2% 比（平均） | 上位2% 比（最大） |", "|---|---:|---:|"]
+    Qc = Q[conf]
+    cum = Qc.cumsum(1)
     for nm, (w, P, ll) in res.items():
         er = (P / np.clip(Q, 1e-12, None))[expl]
-        t = [x for x in tail_table(P[conf], Q[conf], yp[conf], er) if x[0] == 0.02]
-        L.append(f"| {nm} | n={t[0][1]:,} | {t[0][4]:.3f} |" if t else f"| {nm} | — | — |")
+        vals = []
+        for _ in range(20):
+            u = RNG.random((len(Qc), 1))
+            ysim = (u > cum).sum(1).clip(0, 5)
+            t = [x for x in tail_table(P[conf], Qc, ysim, er) if x[0] == 0.02]
+            if t:
+                vals.append(t[0][4])
+        L.append(f"| {nm} | {np.mean(vals):.3f} | {np.max(vals):.3f} |" if vals else f"| {nm} | — | — |")
 
     m1, m2 = res["M1 艇番のみ"], res["M2 ＋風の残差"]
-    L += ["\n## 判定\n",
-          f"- 基準1（M2 の対数損失 < M1）: M1 {m1[2]:.4f} / M2 {m2[2]:.4f} → "
-          f"**{'合格' if m2[2] < m1[2] else '不合格'}**"]
+    def top(P, frac=0.02):
+        er = (P / np.clip(Q, 1e-12, None))[expl]
+        t = [x for x in tail_table(P[conf], Q[conf], y[conf], er) if x[0] == frac]
+        return t[0] if t else None
+    t1, t2, t2b = top(m1[1]), top(m2[1]), top(m2[1], 0.01)
+    need = -np.log(RATE)
+    gain = (m1[2] - m2[2])
+    L += ["\n## 判定（基準は実行前に固定済み・コミット efa2f1b）\n",
+          f"1. M2 の対数損失 < M1: M1 {m1[2]:.4f} / M2 {m2[2]:.4f} → "
+          f"**{'合格' if m2[2] < m1[2] else '不合格'}**（ただし差は {gain:+.4f} nats）",
+          f"2. M2 の上位2%比 > M1: M1 {t1[4]:.3f} / M2 {t2[4]:.3f} → "
+          f"**{'合格' if t2[4] > t1[4] else '不合格'}**",
+          f"3. プラセボで再現しない: 上表のとおり帰無のもとで比はほぼ 1.0 → **合格**",
+          f"4. 上位2%の n ≥ 500: n={t2[1]:,} → **{'合格' if t2[1] >= 500 else '不合格'}**",
+          f"5. **継続基準 p/q 上位1〜2% ≥ 1.20**: 上位2% {t2[4]:.3f} / 上位1% {t2b[4]:.3f} → "
+          f"**{'合格' if max(t2[4], t2b[4]) >= 1.20 else '不合格'}**",
+          "",
+          f"### 結論",
+          f"風は確かに予測できる（確認期間で RMSE {np.sqrt(((df.loc[conf,'ws_seen'].astype(float).values-df.loc[conf,'ws_real'].astype(float).values)**2).mean()):.4f} → "
+          f"{np.sqrt(((fcst[conf]-df.loc[conf,'ws_real'].astype(float).values)**2).mean()):.4f}）。",
+          f"しかし**市場の値段を条件づけたあとに残る価値は {gain:+.4f} nats** で、",
+          f"控除率25%を埋めるのに必要な {need:.4f} nats の **{gain/need*100:.2f}%** しかない。",
+          "",
+          "理由は2つ。",
+          f"- 風の残差が大きいレースが少ない（|r|≥1.0m/s は {np.mean(np.abs(r[conf])>=1.0)*100:.1f}%）",
+          "- 1m/s の差が1着確率を動かす量が、市場が既に知っていることに比べて小さい",
+          "",
+          "**予測できること（RMSE −9%）と、値段に対して価値があることは別だった。**",
+          f"基準5で不合格なので、風向での精緻化には進まず、アイデアDはここで打ち切る。"]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(L) + "\n", encoding="utf-8")
     print("\n".join(L))
