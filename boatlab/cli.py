@@ -424,8 +424,6 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
         typer.echo("  ※本数が少ないうちは回収率は大きく振れます。見るべきは上の一致率の方です。")
 
 
-if __name__ == "__main__":
-    app()
 
 
 @app.command()
@@ -597,3 +595,7 @@ def _finite(v) -> bool:
         return math.isfinite(float(v))
     except Exception:
         return False
+
+
+if __name__ == "__main__":
+    app()
