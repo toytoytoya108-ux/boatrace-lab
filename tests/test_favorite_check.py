@@ -87,11 +87,33 @@ def test_only_reads_races_that_have_pre_deadline_odds(env):
 def test_reports_selection_agreement_when_confident(env):
     """1号艇が圧倒的なレースを与えると、閾値を満たす対象レースが出て一致率も高い。"""
     _seed(env, n=60, strength=(60.0, 3, 2, 1.2, 0.8, 0.5), noise=0.05, seed=3)
-    r = _run(["--threshold", "0.80"])
+    r = _run(["--threshold", "0.50"])
     assert r.exit_code == 0, r.exception
     assert "買い対象レース" in r.output
     agree = float(r.output.split("いちばん堅い艇が一致: ")[1].split("%")[0])
     assert agree >= 90.0
+
+
+def test_threshold_is_rate_matched_not_reused(env):
+    """締切前の確率が系統的にずれていても、同じ選定率になるよう閾値を較正して比べること。
+
+    2026-09-12: 確定オッズで決めた閾値をそのまま締切前に当てていたため、対象が1/6に減り
+    「選定が一致するか」を測れていなかった（実測の系統ズレは +6.14pt）。
+    """
+    from boatlab.store import models as mm
+    _seed(env, n=60, strength=(30.0, 3, 2, 1.2, 0.8, 0.5), noise=0.03, seed=5)
+    # 締切前だけ本命を弱く見せる（＝実測と同じ向きの系統ズレ）
+    with env.session_scope() as s:
+        for row in s.query(mm.OddsSnapshot).filter(mm.OddsSnapshot.source == "official_web").all():
+            row.odds = {k: (v * 1.6 if k.startswith("1-") else v * 0.8) for k, v in row.odds.items()}
+    r = _run(["--threshold", "0.50"])
+    assert r.exit_code == 0, r.exception
+    assert "選定率" in r.output and "に合わせた締切前の閾値" in r.output
+    th_pre = float(r.output.split("締切前の閾値: ")[1].split("（")[0])
+    assert th_pre != 0.50, "確定の閾値を流用せず、締切前側で較正すること"
+    n_pre = int(r.output.split("買い対象レース: 締切前 ")[1].split("R")[0])
+    n_fin = int(r.output.split("/ 確定 ")[1].split("R")[0])
+    assert n_pre == n_fin, "選定率をそろえたので件数は一致するはず"
 
 
 def test_exits_cleanly_without_pre_deadline_odds(env):

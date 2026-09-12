@@ -397,14 +397,26 @@ def favorite_check(threshold: float = typer.Option(0.8878, "--threshold",
     ca, cb = a.max(1), b.max(1)
     typer.echo(f"  いちばん堅い艇が一致: {(sa == sb).mean()*100:.1f}%")
     typer.echo(f"  確率の差: 中央値 {np.median(cb - ca)*100:+.2f}pt / 絶対差の中央値 {np.median(np.abs(cb - ca))*100:.2f}pt")
-    pa, pb = ca >= threshold, cb >= threshold
+    # 締切前の確率は系統的に低く出る（締切間際に本命へ資金が寄るため）。同じ閾値を当てると
+    # 対象が減るだけで「選定が一致するか」を測れない。**同じ選定率になるよう閾値を較正**して比べる。
+    pb = cb >= threshold
+    rate = float(pb.mean())
+    if rate <= 0:
+        typer.echo(f"  確定基準で閾値 {threshold} を超えたレースが0件。日数を貯めてから再実行してください。")
+        raise typer.Exit(0)
+    th_pre = float(np.quantile(ca, 1 - rate))
+    pa = ca >= th_pre
     inter = int((pa & pb).sum())
-    typer.echo(f"  買い対象レース: 締切前基準 {int(pa.sum())}R / 確定基準 {int(pb.sum())}R / 共通 {inter}R")
-    if int(pb.sum()):
-        typer.echo(f"  確定基準で買うべきレースのうち締切前でも選べた割合: {inter / int(pb.sum())*100:.1f}%")
-    if int(pa.sum()):
-        typer.echo(f"  締切前基準で買ったレースが確定基準でも妥当だった割合: {inter / int(pa.sum())*100:.1f}%")
-    ret = [pay[r].get(int(sa[k]) + 1, 0.0) for k, r in enumerate(both) if pa[k] and pay.get(r)]
+    typer.echo(f"  選定率 {rate*100:.1f}% に合わせた締切前の閾値: {th_pre:.4f}（確定は {threshold}）")
+    typer.echo(f"  買い対象レース: 締切前 {int(pa.sum())}R / 確定 {int(pb.sum())}R / 共通 {inter}R"
+               f" → 重なり {inter / max(int(pb.sum()), 1)*100:.1f}%")
+    if int(pb.sum()) >= 5:
+        typer.echo(f"  選ばれたレースに限れば艇の一致: {(sa[pb] == sb[pb]).mean()*100:.1f}%")
+    need = 40
+    if int(pb.sum()) < need:
+        typer.echo(f"  ※対象が {int(pb.sum())}R しかありません。重なりの判定には {need}R 以上ほしいので、"
+                   f"あと数日ぶん貯めてから再実行してください。")
+    ret = [pay[r].get(int(sa[k]) + 1, 0.0) for k, r in enumerate(both) if pa[k] and pay.get(r)]  # 締切前の選定で買った場合
     if ret:
         ret = np.array(ret)
         typer.echo(f"  締切前の選定で複勝1点100円: n={len(ret)} 的中{(ret > 0).mean()*100:.1f}% "
