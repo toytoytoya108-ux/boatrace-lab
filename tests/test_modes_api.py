@@ -67,3 +67,33 @@ def test_modes_endpoint(client):
     assert t["n_buy"] == 1 and t["races"][0]["pred_role"] == "place"
     t = tc.get("/api/today?mode=ana", headers=h).json()
     assert t["n_skip"] == 1 and t["races"][0]["skip_reason"] == "q_man_low"
+
+
+def test_nan_is_serialized_as_null(client):
+    """賭け金ゼロの行しか無いモードの成績（0÷0）でもサーバーエラーにならない。"""
+    tc, dbm, appmod = client
+    from boatlab.store import models as mm
+    from boatlab.util import now_jst
+    day = now_jst().date()
+    rid = int(day.strftime("%Y%m%d")) * 10000 + 201
+    now = now_jst().replace(tzinfo=None)
+    with dbm.session_scope() as s:
+        s.add(mm.ModelVersion(version="t", feature_set_version="fs", selection_version="sel", params={}, status="active"))
+        s.add(mm.SettingsVersion(id=1, points=15, stake_per_point=100, extra={}))
+        s.add(mm.Race(id=rid, race_date=day, stadium_code=1, race_no=1, source="t", closed_at=now + timedelta(minutes=30)))
+        s.add(mm.Result(race_id=rid, trifecta="1-2-3", trifecta_payout=650, payouts={}, refunds=[], is_irregular=False,
+                        source="t", fetched_at=now + timedelta(minutes=60)))
+    with dbm.session_scope() as s:
+        # 推定オッズで見送り＝買い目なし＝賭け金ゼロ。これだけが採点対象になると 0÷0 が出る
+        s.add(mm.Prediction(race_id=rid, model_version="t", settings_id=1, stage="final", role="ana", created_at=now,
+                            asof_ts=now, post_time_at_pred=now + timedelta(minutes=30), features_used=None, completeness=1.0,
+                            boat_eval={}, probs={}, odds_used={}, ev={}, confidence=0.5, expected_return=0.0,
+                            decision="skip", skip_reason="odds_estimated", flags={"mode": "ana", "odds_estimated": True},
+                            rationale={"summary": "x"}, rationale_text="x", input_hash="h"))
+    from boatlab.ops import daily
+    daily.score_pending()
+    h = _auth(appmod)
+    for path in ("/api/stats?mode=ana", "/api/stats?mode=place", "/api/today?mode=ana", "/api/modes", "/api/readiness?mode=ana"):
+        r = tc.get(path, headers=h)
+        assert r.status_code == 200, (path, r.text[:200])
+        assert "NaN" not in r.text

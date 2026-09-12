@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import time
 from datetime import datetime, date, timedelta
@@ -25,7 +26,26 @@ SECRET = os.environ.get("BOATLAB_SECRET", "change-me")
 PASSWORD = os.environ.get("BOATLAB_PASSWORD", "")
 WEB_DIR = Path(os.environ.get("BOATLAB_WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
 
-app = FastAPI(title="boatlab", docs_url=None, redoc_url=None)
+class SafeJSON(JSONResponse):
+    """NaN/inf を null にしてから返す。
+
+    2026-09-12: 新モードの成績集計で 0÷0（賭け金ゼロの行だけの区間、オッズ無しの平均）が NaN になり、
+    標準の JSONResponse が ValueError を投げて画面が「サーバーエラー」になった。集計側で個別に防ぐより
+    出口で一括して null に落とすほうが漏れがない。"""
+
+    def render(self, content) -> bytes:
+        def clean(o):
+            if isinstance(o, float):
+                return o if math.isfinite(o) else None
+            if isinstance(o, dict):
+                return {k: clean(v) for k, v in o.items()}
+            if isinstance(o, (list, tuple)):
+                return [clean(v) for v in o]
+            return o
+        return super().render(clean(content))
+
+
+app = FastAPI(title="boatlab", docs_url=None, redoc_url=None, default_response_class=SafeJSON)
 
 
 # ---------------------------------------------------------------- auth
