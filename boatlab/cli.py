@@ -511,3 +511,12 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
             typer.echo(f"  {STADIUMS.get(x['stadium_code'])} {x['race_no']:>2}R {str(x['closed_at'])[11:16]}  {int(x['stake'] or 0):>5,}円  {res}")
         if len(fired) > 20:
             typer.echo(f"  … 他 {len(fired)-20}R")
+        # 見送りは理由ごとに件数、直近5件は個別に（「候補なし」が正しい見送りか、オッズ未取得かを見分ける）
+        skipped = [x for x in rs if x["decision"] != "buy"]
+        if skipped:
+            from collections import Counter
+            cnt = Counter(x["skip_reason"] or "?" for x in skipped)
+            typer.echo("  見送り: " + "、".join(f"{k} {v}R" for k, v in cnt.most_common()))
+            for x in skipped[-5:]:
+                typer.echo(f"    {STADIUMS.get(x['stadium_code'])} {x['race_no']:>2}R {str(x['closed_at'])[11:16]}  "
+                           f"{x['skip_reason']}  参考{int(x['stake'] or 0):,}円  {x['rationale_text'] or ''}")
