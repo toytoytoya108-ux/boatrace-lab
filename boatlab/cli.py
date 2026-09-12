@@ -620,20 +620,19 @@ def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer
     from boatlab.store.db import get_engine
     from boatlab.util import now_jst
     d = _date.fromisoformat(day) if day else now_jst().date()
-    prefix = f"odds3t/{d:%Y%m%d}/{stadium:02d}_{race:02d}_"
-    with get_engine().connect() as c:
-        rows = c.execute(_text("SELECT key, path, fetched_at FROM raw_files WHERE source='official_web' AND key LIKE :k "
-                               "ORDER BY fetched_at DESC"), {"k": prefix + "%"}).fetchall()
-    if not rows:
-        typer.echo(f"{STADIUMS.get(stadium)} {race}R: 生HTMLの記録がありません（{prefix}*）")
+    # 生HTMLは DB ではなく data/raw/official_web/odds3t/YYYYMMDD/ に保存される（Fetcher.fetch）
+    from boatlab.config import RAW_DIR
+    folder = _P(RAW_DIR) / "official_web" / "odds3t" / f"{d:%Y%m%d}"
+    files = sorted(folder.glob(f"{stadium:02d}_{race:02d}_*.html"))
+    if not files:
+        typer.echo(f"{STADIUMS.get(stadium)} {race}R: 生HTMLがありません（{folder}/{stadium:02d}_{race:02d}_*.html）")
+        have = sorted(x.name for x in folder.glob("*.html"))[:8] if folder.exists() else []
+        typer.echo(f"  同じ日にあるファイル例: {have}")
         raise typer.Exit(1)
-    key, path, fa = rows[0]
-    p = _P(path) if path else None
-    if not p or not p.exists():
-        typer.echo(f"記録はあるがファイルが無い: key={key} path={path}")
-        raise typer.Exit(1)
+    p = files[-1]
+    key, fa = p.name, p.stat().st_mtime
     html = p.read_bytes().decode("utf-8", errors="replace")
-    typer.echo(f"{STADIUMS.get(stadium)} {race}R  {key}  {fa}  {len(html):,} bytes")
+    typer.echo(f"{STADIUMS.get(stadium)} {race}R  {p}  {len(html):,} bytes")
     odds = parse_odds3t(html)
     fin = {k: v for k, v in odds.items() if isinstance(v, (int, float)) and v == v}
     missing = [k for k in _PL if odds.get(k) is None]
