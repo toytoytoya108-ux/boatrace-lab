@@ -201,8 +201,17 @@ def check_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = type
     f = make_fetcher()
     rec = fetch_odds3t(f, d, stadium, race)
     if rec is not None:
-        typer.echo(f"OK: 3連単 {len(rec.odds)} 通り読めています。例 1-2-3={rec.odds.get('1-2-3')}")
-        return
+        fin = sum(1 for v in rec.odds.values() if isinstance(v, (int, float)))
+        none_keys = [k for k, v in rec.odds.items() if v is None]
+        # 2026-09-12: キー数だけ見て「読めている」と誤判定した。予想側は「数値が100通り以上」を条件にするので
+        # ここでも同じ基準で判定する
+        if fin >= 100:
+            typer.echo(f"OK: 3連単 {len(rec.odds)} 通り中 {fin} 通りが数値。例 1-2-3={rec.odds.get('1-2-3')}"
+                       + (f"（数値でない組 {len(none_keys)}: {none_keys[:8]}）" if none_keys else ""))
+            return
+        typer.echo(f"NG: キーは {len(rec.odds)} 通りあるが数値は {fin} 通りだけ。予想は推定オッズに落ちる。")
+        typer.echo(f"    数値でない組: {none_keys[:20]}  → `lab dump-odds3t` でセルの文字列を確認")
+        raise typer.Exit(1)
     from boatlab.config import OFFICIAL_ODDS3T
     url = OFFICIAL_ODDS3T.format(rno=race, jcd=stadium, yyyymmdd=d.strftime("%Y%m%d"))
     res = f.fetch("official_web", url, f"odds3t/{d:%Y%m%d}/{stadium:02d}_{race:02d}_debug.html", use_cache=False)
