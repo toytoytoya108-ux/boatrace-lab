@@ -547,7 +547,7 @@ def why_estimated(stadium: int = typer.Option(..., "--stadium"), race: int = typ
             typer.echo("  races に無い（race_id の作り方が違う？）")
             same = c.execute(_text("SELECT id, race_no FROM races WHERE race_date=:d AND stadium_code=:s ORDER BY race_no"),
                              {"d": str(d), "s": stadium}).fetchall()
-            typer.echo("  同じ場のID:", [x[0] for x in same][:3])
+            typer.echo(f"  同じ場のID: {[x[0] for x in same][:3]}")
             raise typer.Exit()
         typer.echo(f"  締切 {r[1]}")
         snaps = c.execute(_text("SELECT id, source, bet_type, captured_at, odds FROM odds_snapshots WHERE race_id=:r "
