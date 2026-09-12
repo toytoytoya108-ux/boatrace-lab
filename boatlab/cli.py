@@ -645,8 +645,8 @@ def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer
     for tb in _re.findall(r"<table[^>]*>(.*?)</table>", text, flags=_re.S):
         for r in _re.findall(r"<tr[^>]*>(.*?)</tr>", tb, flags=_re.S):
             for cell in _re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, flags=_re.S):
-                v = _TAG.sub("", cell).replace("\\n", "").strip()
-                if v and not _re.fullmatch(r"\\d", v) and not _re.fullmatch(r"\\d+\\.\\d+", v) and len(v) <= 12:
+                v = _TAG.sub("", cell).replace("\n", "").strip()
+                if v and not _re.fullmatch(r"\d", v) and not _re.fullmatch(r"\d+\.\d+", v) and len(v) <= 12:
                     odd_cells[v] = odd_cells.get(v, 0) + 1
     top = sorted(odd_cells.items(), key=lambda x: -x[1])[:25]
     typer.echo("  数字でも小数でもないセル（出現回数）: " + ", ".join(f"{repr(k)}×{n}" for k, n in top))
