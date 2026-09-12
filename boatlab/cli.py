@@ -599,3 +599,54 @@ def _finite(v) -> bool:
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer.Option(..., "--race"),
+                day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日）")):
+    """保存済みの生HTMLから3連単オッズを再パースし、読めなかった組とそのセルの文字列を見せる。
+
+    「120通りのキーはあるのに値が数値でない」ときに、公式ページのどんな表記をパーサが取りこぼしているかを
+    特定する（例: 4桁オッズのカンマ、欠場表記、記号）。"""
+    import re as _re
+    from datetime import date as _date
+    from pathlib import Path as _P
+
+    from sqlalchemy import text as _text
+
+    from boatlab.config import STADIUMS
+    from boatlab.ingest.official_web import _TAG, parse_odds3t
+    from boatlab.model.trifecta import PERM_LABELS as _PL
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    d = _date.fromisoformat(day) if day else now_jst().date()
+    prefix = f"odds3t/{d:%Y%m%d}/{stadium:02d}_{race:02d}_"
+    with get_engine().connect() as c:
+        rows = c.execute(_text("SELECT key, path, fetched_at FROM raw_files WHERE source='official_web' AND key LIKE :k "
+                               "ORDER BY fetched_at DESC"), {"k": prefix + "%"}).fetchall()
+    if not rows:
+        typer.echo(f"{STADIUMS.get(stadium)} {race}R: 生HTMLの記録がありません（{prefix}*）")
+        raise typer.Exit(1)
+    key, path, fa = rows[0]
+    p = _P(path) if path else None
+    if not p or not p.exists():
+        typer.echo(f"記録はあるがファイルが無い: key={key} path={path}")
+        raise typer.Exit(1)
+    html = p.read_bytes().decode("utf-8", errors="replace")
+    typer.echo(f"{STADIUMS.get(stadium)} {race}R  {key}  {fa}  {len(html):,} bytes")
+    odds = parse_odds3t(html)
+    fin = {k: v for k, v in odds.items() if isinstance(v, (int, float)) and v == v}
+    missing = [k for k in _PL if odds.get(k) is None]
+    typer.echo(f"  パース: キー {len(odds)} / 数値 {len(fin)} / 数値でない {len(missing)}")
+    typer.echo(f"  数値でない組: {missing[:40]}{' …' if len(missing) > 40 else ''}")
+    # 表の全セルのうち、「1桁の数字」でも「小数」でもない文字列を集計する（＝パーサが None にしたもの）
+    text = _re.sub(r"<!--.*?-->", "", html, flags=_re.S)
+    odd_cells = {}
+    for tb in _re.findall(r"<table[^>]*>(.*?)</table>", text, flags=_re.S):
+        for r in _re.findall(r"<tr[^>]*>(.*?)</tr>", tb, flags=_re.S):
+            for cell in _re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, flags=_re.S):
+                v = _TAG.sub("", cell).replace("\\n", "").strip()
+                if v and not _re.fullmatch(r"\\d", v) and not _re.fullmatch(r"\\d+\\.\\d+", v) and len(v) <= 12:
+                    odd_cells[v] = odd_cells.get(v, 0) + 1
+    top = sorted(odd_cells.items(), key=lambda x: -x[1])[:25]
+    typer.echo("  数字でも小数でもないセル（出現回数）: " + ", ".join(f"{repr(k)}×{n}" for k, n in top))
