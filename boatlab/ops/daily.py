@@ -25,7 +25,7 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
-from boatlab.model.modes import MODES_VERSION, ModeParams, select_ana, select_katai, select_place
+from boatlab.model.modes import MODES_VERSION, ModeParams, market_probs, race_tags, select_ana, select_katai, select_place
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
@@ -292,6 +292,9 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
     real = not bool(o["flags"].get("odds_estimated"))
     oarr = np.array([np.nan if o["odds_used"][k] is None else float(o["odds_used"][k]) for k in _PL])
     main_idx = [combo_index(x["combo"]) for x in sorted(o["selections"], key=lambda x: x["rank"]) if x["kind"] == "main"]
+    # 荒れ理由タグ・堅い注意タグ（選定には使わない。表示と前向き検証のため。市場ベースのタグは実オッズのときだけ）
+    tags = race_tags(o["boat_eval"], r.stadium_code, getattr(r, "title", None), getattr(r, "race_type", None),
+                     market_probs(oarr) if real else None)
     common = dict(race_id=rid, model_version=model_version, settings_id=settings_id, stage="final",
                   created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at, features_used=None,
                   odds_snapshot_id=odds_by_race.get(rid, (None,))[0], completeness=o["completeness"],
@@ -301,7 +304,8 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
     def _add(role: str, fired: bool, reason: str | None, flags: dict, sels: list[dict], text: str, er: float = 0.0):
         p = Prediction(**common, role=role, expected_return=er, decision=("buy" if fired else "skip"),
                        skip_reason=(None if fired else reason),
-                       flags={**o["flags"], "mode": role, "modes_version": MODES_VERSION, "params": prm.to_dict(), **flags},
+                       flags={**o["flags"], "mode": role, "modes_version": MODES_VERSION, "params": prm.to_dict(),
+                              "tags": tags["rough"], "solid_tags": tags["solid"], **flags},
                        rationale_text=text)
         s.add(p)
         s.flush()

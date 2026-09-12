@@ -518,6 +518,22 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
             typer.echo(f"  {STADIUMS.get(x['stadium_code'])} {x['race_no']:>2}R {str(x['closed_at'])[11:16]}  {int(x['stake'] or 0):>5,}円  {res}")
         if len(fired) > 20:
             typer.echo(f"  … 他 {len(fired)-20}R")
+        if role == "ana":
+            # タグ別（事前登録した3条件の前向き検証。発火300R以上で タグ付き > タグ無し かつ差5pt以上 が合格）
+            from boatlab.model.modes import PREREGISTERED, TAG_NAMES
+            import json as _j
+            with eng.connect() as c:
+                trs = c.execute(_text("""SELECT p.flags, sc.hit, sc.stake_total, sc.payout_total FROM predictions p
+                    JOIN scoring sc ON sc.prediction_id=p.id WHERE p.stage='final' AND p.role='ana' AND p.decision='buy' AND sc.valid=1""")).fetchall()
+            acc = {}
+            for fl, hit, stk, pay in trs:
+                fl = _j.loads(fl) if isinstance(fl, str) else (fl or {})
+                for k in (fl.get("tags") or ["none"]):
+                    a = acc.setdefault(k, [0, 0, 0]); a[0] += 1; a[1] += int(stk or 0); a[2] += int(pay or 0)
+            if acc:
+                typer.echo("  タグ別（累計・発火のみ）:")
+                for k, a in sorted(acc.items(), key=lambda x: -x[1][0]):
+                    typer.echo(f"    {'★' if k in PREREGISTERED else ' '} {TAG_NAMES.get(k, 'タグなし'):<28} {a[0]:>4}R  回収率 {a[2]/a[1]*100 if a[1] else 0:.1f}%")
         # 見送りは理由ごとに件数、直近5件は個別に（「候補なし」が正しい見送りか、オッズ未取得かを見分ける）
         skipped = [x for x in rs if x["decision"] != "buy"]
         if skipped:

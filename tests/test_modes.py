@@ -97,3 +97,20 @@ def test_params_roundtrip():
     p = ModeParams(ana_qman_min=0.3, katai_budget=5000)
     assert ModeParams.from_dict(p.to_dict()) == p
     assert ModeParams.from_dict({"unknown": 1}) == ModeParams()
+
+
+def test_race_tags():
+    from boatlab.model.modes import race_tags
+    be = {"1": {"klass": "B1", "nat_win_rate": 4.5, "avg_st": 0.18, "exhibition_rank": 5, "course_pred": 1},
+          "2": {"klass": "A1", "nat_win_rate": 6.8, "avg_st": 0.14, "exhibition_rank": 1, "course_pred": 2},
+          "3": {"klass": "B1", "nat_win_rate": 4.0, "avg_st": 0.20, "exhibition_rank": 3, "course_pred": 3},
+          "4": {"klass": "A2", "nat_win_rate": 5.5, "avg_st": 0.15, "exhibition_rank": 2, "course_pred": 4},
+          "5": {"klass": "B1", "nat_win_rate": 4.2, "avg_st": 0.17, "exhibition_rank": 4, "course_pred": 5},
+          "6": {"klass": "B2", "nat_win_rate": 3.1, "avg_st": 0.19, "exhibition_rank": 6, "course_pred": 5}}
+    q = np.full(120, 1 / 120)
+    t = race_tags(be, 4, "第1戦 ルーキーシリーズ", "予選", q)
+    assert set(t["rough"]) == {"l1_b", "kado", "l1_ext4", "rough_stadium", "maezuke", "top1_12"}
+    assert t["solid"] == ["women_rookie"]
+    t = race_tags({"1": {"klass": "A1", "exhibition_rank": 1}}, 24, "一般", "モーニング一般", None)
+    assert t["rough"] == [] and t["solid"] == ["kikaku"]
+    assert race_tags(None, None, None, None, None) == {"rough": [], "solid": []}

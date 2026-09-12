@@ -151,3 +151,55 @@ def select_place(odds3t: np.ndarray, prm: ModeParams) -> dict:
               lane=ms["q1_arg"] + 1, q=ms["q1_max"], stake=prm.place_stake,
               reason=None if prm.tansho_enabled and ms["q1_max"] >= prm.tansho_q_min else "q_low")
     return dict(fukusho=fk, tansho=tn, q_man=ms["q_man"])
+
+
+# ---------------------------------------------------------------- 荒れ理由タグ・堅い注意タグ（2026-09-12、ana_playbook.md）
+import re as _re
+
+ROUGH_STADIUMS = {4, 14, 2, 3}                       # 平和島・鳴門・戸田・江戸川（全期間で万舟率 ×1.10〜1.18）
+_KIKAKU = _re.compile(r"モーニング|ツッキー|ガチ勝|ピンクル|サンライズ|進入固定|シャイニング")
+_WOMEN_ROOKIE = _re.compile(r"女子|ルーキー|レディース|新人")
+TAG_NAMES = {
+    "l1_b": "1号艇がB級", "kado": "4カド条件（4号艇が3号艇より勝率高くST速い）", "l1_ext4": "1号艇の展示タイム4位以下",
+    "rough_stadium": "荒れる場（平和島・鳴門・戸田・江戸川）", "maezuke": "展示で前づけあり", "top1_12": "1番人気12倍以上",
+    "women_rookie": "女子戦・ルーキー戦（通説と逆で堅い）", "kikaku": "企画レース（1号艇に強い選手・堅い）",
+}
+# 前向き検証の対象（事前登録）。合格基準: 発火300R以上で タグ付き回収率 > タグ無し かつ 差5pt以上
+PREREGISTERED = ("l1_b", "kado", "l1_ext4")
+
+
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def race_tags(boat_eval: dict | None, stadium_code: int | None, title: str | None, race_type: str | None,
+              q: np.ndarray | None) -> dict:
+    """荒れ理由タグ（rough）と堅い注意タグ（solid）。**選定には使わない。** 表示と前向き検証のため。"""
+    be = boat_eval or {}
+    b = {int(k): v for k, v in be.items() if str(k).isdigit()}
+    rough, solid = [], []
+    l1 = b.get(1) or {}
+    if str(l1.get("klass") or "") in ("B1", "B2"):
+        rough.append("l1_b")
+    n3, n4 = _f((b.get(3) or {}).get("nat_win_rate")), _f((b.get(4) or {}).get("nat_win_rate"))
+    s3, s4 = _f((b.get(3) or {}).get("avg_st")), _f((b.get(4) or {}).get("avg_st"))
+    if None not in (n3, n4, s3, s4) and n4 > n3 and s4 < s3:
+        rough.append("kado")
+    r1 = _f(l1.get("exhibition_rank"))
+    if r1 is not None and r1 >= 4:
+        rough.append("l1_ext4")
+    if stadium_code in ROUGH_STADIUMS:
+        rough.append("rough_stadium")
+    if any((_f(v.get("course_pred")) or 99) < ln for ln, v in b.items()):
+        rough.append("maezuke")
+    if q is not None and len(q) and q.max() > 0 and 0.75 / q.max() >= 12:
+        rough.append("top1_12")
+    text = f"{title or ''} {race_type or ''}"
+    if _WOMEN_ROOKIE.search(text):
+        solid.append("women_rookie")
+    if _KIKAKU.search(text):
+        solid.append("kikaku")
+    return dict(rough=rough, solid=solid)

@@ -526,6 +526,25 @@ def modes(d: str | None = None, _=Depends(require_auth)):
         for x in streak:
             cur = 0 if x["hit"] else cur + 1
             best = max(best, cur)
+        # タグ別の累計（穴モードの前向き検証用。事前登録: l1_b / kado / l1_ext4、合格基準は modes.py）
+        by_tag = None
+        if role == "ana":
+            from boatlab.model.modes import PREREGISTERED, TAG_NAMES
+            tag_rows = _q("""
+                SELECT p.flags, sc.hit, sc.stake_total, sc.payout_total
+                FROM predictions p JOIN scoring sc ON sc.prediction_id = p.id
+                WHERE p.stage = 'final' AND p.role = 'ana' AND p.decision = 'buy' AND sc.valid = 1
+                  AND (:mv IS NULL OR p.model_version = :mv)""", mv=mv)
+            acc = {k: [0, 0, 0, 0] for k in list(TAG_NAMES) + ["none"]}
+            for tr in tag_rows:
+                tg = ((tr.get("flags") or {}).get("tags") or []) if isinstance(tr.get("flags"), dict) else []
+                keys = tg or ["none"]
+                for k in keys:
+                    if k in acc:
+                        a = acc[k]; a[0] += 1; a[1] += int(bool(tr["hit"])); a[2] += int(tr["stake_total"] or 0); a[3] += int(tr["payout_total"] or 0)
+            by_tag = {k: {"name": TAG_NAMES.get(k, "タグなし"), "n": a[0], "hits": a[1], "stake": a[2], "payout": a[3],
+                          "roi": (a[3] / a[2] if a[2] else None), "preregistered": k in PREREGISTERED}
+                      for k, a in acc.items() if a[0] or k in PREREGISTERED}
         c = cum[0] if cum else {}
         n, hits = int(c.get("n") or 0), int(c.get("hits") or 0)
         stake, payout = int(c.get("stake") or 0), int(c.get("payout") or 0)
@@ -543,6 +562,7 @@ def modes(d: str | None = None, _=Depends(require_auth)):
             "cumulative": {"n": n, "hits": hits, "hit_rate": (hits / n if n else None), "stake": stake, "payout": payout,
                            "roi": (payout / stake if stake else None), "pnl": payout - stake, "max_lose_streak": best,
                            "since": c.get("since")},
+            "by_tag": by_tag,
         }
     return out
 
