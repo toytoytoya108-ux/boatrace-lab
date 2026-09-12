@@ -40,9 +40,12 @@ def _odds3t_table(tb: str) -> dict[str, float | None]:
             continue
         seq: list[tuple[str, float | int | None]] = []
         for v in vals:
+            v = v.replace(",", "")
             if re.fullmatch(r"\d", v):
                 seq.append(("b", int(v)))
-            elif re.fullmatch(r"\d+\.\d+", v):
+            elif re.fullmatch(r"\d+\.\d+", v) or re.fullmatch(r"\d{2,}", v):
+                # 1000倍以上は "1274" のように小数点なしで表示される（2026-09-12 大村12R で確認）。
+                # 1桁は艇番なので、オッズとして受けるのは2桁以上の整数だけ
                 seq.append(("o", float(v)))
             else:
                 seq.append(("o", None))  # 欠場・空欄

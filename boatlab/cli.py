@@ -638,14 +638,16 @@ def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer
     missing = [k for k in _PL if odds.get(k) is None]
     typer.echo(f"  パース: キー {len(odds)} / 数値 {len(fin)} / 数値でない {len(missing)}")
     typer.echo(f"  数値でない組: {missing[:40]}{' …' if len(missing) > 40 else ''}")
-    # 表の全セルのうち、「1桁の数字」でも「小数」でもない文字列を集計する（＝パーサが None にしたもの）
+    # 表の全セルのうち、「1桁の数字」でも「数値」でもないものを、空セルも含めて生HTMLごと集計する
     text = _re.sub(r"<!--.*?-->", "", html, flags=_re.S)
     odd_cells = {}
     for tb in _re.findall(r"<table[^>]*>(.*?)</table>", text, flags=_re.S):
         for r in _re.findall(r"<tr[^>]*>(.*?)</tr>", tb, flags=_re.S):
             for cell in _re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", r, flags=_re.S):
-                v = _TAG.sub("", cell).replace("\n", "").strip()
-                if v and not _re.fullmatch(r"\d", v) and not _re.fullmatch(r"\d+\.\d+", v) and len(v) <= 12:
-                    odd_cells[v] = odd_cells.get(v, 0) + 1
-    top = sorted(odd_cells.items(), key=lambda x: -x[1])[:25]
-    typer.echo("  数字でも小数でもないセル（出現回数）: " + ", ".join(f"{repr(k)}×{n}" for k, n in top))
+                v = _TAG.sub("", cell).replace("\n", "").strip().replace(",", "")
+                if not _re.fullmatch(r"\d", v) and not _re.fullmatch(r"\d+\.\d+", v) and not _re.fullmatch(r"\d{2,}", v):
+                    k = f"text={v[:20]!r} html={cell.strip()[:70]!r}"
+                    odd_cells[k] = odd_cells.get(k, 0) + 1
+    typer.echo("  艇番でも数値でもないセル（出現回数）:")
+    for k, n in top:
+        typer.echo(f"    ×{n}  {k}")

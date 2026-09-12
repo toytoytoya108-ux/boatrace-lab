@@ -63,3 +63,15 @@ def test_missing_boat_is_none_not_dropped():
 
 def test_unrelated_page_returns_empty():
     assert parse_odds3t("<html><table><tr><td>まったく別の表</td></tr></table></html>") == {}
+
+
+
+def test_integer_and_comma_odds_are_read():
+    """1000倍以上は "1274" のように小数点なしで出る（2026-09-12 大村12R）。カンマ付きも念のため。"""
+    html, exp = _page()
+    html = html.replace(f"<td>{exp['1-2-3']}</td>", "<td>1274</td>", 1)
+    html = html.replace(f"<td>{exp['1-2-4']}</td>", "<td>2,300</td>", 1)
+    html = html.replace(f"<td>{exp['1-2-5']}</td>", "<td></td>", 1)            # 空欄は None のまま
+    got = parse_odds3t(html)
+    assert got["1-2-3"] == 1274.0 and got["1-2-4"] == 2300.0 and got["1-2-5"] is None
+    assert len(got) == 120 and sum(v is not None for v in got.values()) == 119
