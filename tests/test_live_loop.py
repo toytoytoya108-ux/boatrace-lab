@@ -71,15 +71,17 @@ def test_train_predict_score(tmp_path, monkeypatch):
             for mp in mps:
                 assert mp.flags.get("mode") == role and mp.decision in ("buy", "skip")
                 msel = s.execute(select(PredictionSelection).where(PredictionSelection.prediction_id == mp.id)).scalars().all()
-                if mp.decision == "skip":
-                    assert msel == [] and mp.skip_reason
+                if mp.skip_reason == "odds_estimated":
+                    assert msel == []                       # 実オッズが無ければ市場ベースの買い目は出せない
+                elif mp.decision == "skip" and role == "katai" and mp.skip_reason in ("too_few_points", "no_guarantee", "odds_missing"):
+                    assert msel == []
                 elif role == "ana":
                     assert len(msel) == 21 and all(x.stake == 100 and x.kind == "ana" for x in msel)
                 elif role == "katai":
                     assert 3 <= len(msel) <= 10 and sum(x.stake for x in msel) <= 3000
                     assert all(x.stake % 100 == 0 and x.kind == "katai" for x in msel)
                 else:
-                    assert 1 <= len(msel) <= 2 and all(x.kind in ("fukusho", "tansho") and x.combo in "123456" for x in msel)
+                    assert 1 <= len(msel) <= 2 and all(x.kind in ("fukusho", "tansho") and x.combo[0] in "複単" and x.combo[1:] in "123456" for x in msel)
     sc = daily.score_pending()
     assert sc["scored"] == out["predicted"] * 5  # 本体＋絞り込み型＋3モード
     with dbmod.session_scope() as s:

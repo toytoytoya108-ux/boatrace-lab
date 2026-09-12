@@ -451,7 +451,9 @@ def status(_=Depends(require_auth)):
 
     pg = _q("SELECT COUNT(*) AS n, COUNT(DISTINCT race_id) AS races FROM pool_gap_picks WHERE race_id >= :lo AND race_id < :hi",
             lo=int(day.strftime("%Y%m%d")) * 10000, hi=(int(day.strftime("%Y%m%d")) + 1) * 10000)
-    pred = _q("SELECT COUNT(*) AS n, SUM(CASE WHEN p.flags LIKE '%odds_estimated%' THEN 1 ELSE 0 END) AS est "
+    # 注意: flags は常に "odds_estimated": true/false を含むので LIKE '%odds_estimated%' では全件に一致してしまう
+    # （2026-09-12 に全件「異常」と誤表示した）。JSON の値で判定する。
+    pred = _q("SELECT COUNT(*) AS n, SUM(CASE WHEN json_extract(p.flags, '$.odds_estimated') = 1 THEN 1 ELSE 0 END) AS est "
               "FROM predictions p JOIN races r ON r.id=p.race_id "
               "WHERE r.race_date=:d AND p.stage='final' AND p.role='focused'", d=str(day))
     jobs = _q("SELECT job, started_at, finished_at, ok, substr(COALESCE(error,''),1,120) AS error "

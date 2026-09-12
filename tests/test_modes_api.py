@@ -47,7 +47,7 @@ def test_modes_endpoint(client):
     with dbm.session_scope() as s:
         p = mm.Prediction(**common, role="place", decision="buy", flags={"mode": "place"})
         s.add(p); s.flush()
-        s.add(mm.PredictionSelection(prediction_id=p.id, combo="1", rank=1, kind="fukusho", stake=100, prob=0.95))
+        s.add(mm.PredictionSelection(prediction_id=p.id, combo="複1", rank=1, kind="fukusho", stake=100, prob=0.95))
         s.add(mm.Prediction(**common, role="ana", decision="skip", skip_reason="q_man_low", flags={"mode": "ana"}))
         s.add(mm.Prediction(**common, role="katai", decision="skip", skip_reason="confidence_low", flags={"mode": "katai"}))
     from boatlab.ops import daily

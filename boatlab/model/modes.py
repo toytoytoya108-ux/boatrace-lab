@@ -93,11 +93,12 @@ def select_ana(odds3t: np.ndarray, prm: ModeParams) -> dict:
     if q is None or not prm.ana_enabled:
         return dict(fired=False, reason="odds_missing" if q is None else "disabled", points=[], stakes=[])
     ms = market_summary(q)
-    if ms["q_man"] < prm.ana_qman_min:
-        return dict(fired=False, reason="q_man_low", q_man=ms["q_man"], points=[], stakes=[])
     order = np.argsort(-q)
     pts = [int(i) for i in order[prm.ana_rank_lo - 1: prm.ana_rank_hi]]
-    return dict(fired=True, reason=None, q_man=ms["q_man"], points=pts, stakes=[prm.ana_stake] * len(pts),
+    fired = ms["q_man"] >= prm.ana_qman_min
+    # 見送りでも「買うならこれ」を返す。旧モードと同じく、見送りレースも仮想採点して条件の良し悪しを測る
+    return dict(fired=bool(fired), reason=(None if fired else "q_man_low"), q_man=ms["q_man"],
+                points=pts, stakes=[prm.ana_stake] * len(pts),
                 odds=[float(odds3t[i]) for i in pts], q=[float(q[i]) for i in pts])
 
 
@@ -120,8 +121,6 @@ def select_katai(main_idx: list[int], odds3t: np.ndarray, confidence: float, prm
     """本線（モデル確率順）を保証つき配分で。信頼度が足りなければ発火しない。"""
     if not prm.katai_enabled:
         return dict(fired=False, reason="disabled", points=[], stakes=[])
-    if confidence < prm.katai_confidence_min:
-        return dict(fired=False, reason="confidence_low", points=[], stakes=[])
     main = [int(i) for i in main_idx][: prm.katai_points_max]
     odds = np.array([odds3t[i] for i in main], float)
     ok = np.isfinite(odds) & (odds > 0)
@@ -132,9 +131,10 @@ def select_katai(main_idx: list[int], odds3t: np.ndarray, confidence: float, prm
     k, st = guaranteed_stakes(odds, prm.katai_budget)
     if k < prm.katai_points_min:
         return dict(fired=False, reason="too_few_points" if k else "no_guarantee", points=[], stakes=[], k=k)
-    return dict(fired=True, reason=None, points=main[:k], stakes=[int(x) for x in st],
-                odds=[float(o) for o in odds[:k]], min_payout=int(min(st[i] * odds[i] for i in range(k))),
-                stake_total=int(st.sum()))
+    fired = confidence >= prm.katai_confidence_min
+    return dict(fired=bool(fired), reason=(None if fired else "confidence_low"), points=main[:k],
+                stakes=[int(x) for x in st], odds=[float(o) for o in odds[:k]],
+                min_payout=int(min(st[i] * odds[i] for i in range(k))), stake_total=int(st.sum()))
 
 
 # ---------------------------------------------------------------- 複勝・単勝

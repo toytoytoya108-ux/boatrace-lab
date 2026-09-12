@@ -445,3 +445,11 @@ python scripts/run_fs2_experiments.py   # fs2 グループ効果検証（進行�
   記録が2週間ほど貯まったら締切前基準で再較正する（自動では変えない。settings_versions.extra.modes で人が変える）。
 - 設計の根拠: `two_modes.md`（帯の選択）、`condition_rules.md`（EV選定は不発・レース条件のみ有効）、
   `no_hit_loss.md`（保証つき配分）、`manshu.md`（万舟確率）。
+
+### 2026-09-12 夕方の修正
+- **状態画面の「確定予想 異常: n件が推定オッズ」は誤表示だった。** `flags LIKE '%odds_estimated%'` は
+  `"odds_estimated": false` にも一致するので全件が異常に見えた。`json_extract(flags,'$.odds_estimated')=1` に修正。
+  実際は「3連単141件」取れており正常。
+- 3モードとも**見送りでも「買うならこれ」を記録**する（旧モードと同じ扱い）。見送りレースも仮想採点され、
+  条件の良し悪しを後から測れる。推定オッズのときだけ市場ベースの2モードは何も出さない。
+- 複勝・単勝の combo は主キー衝突を避けて「複1」「単1」の形。`score_place` は数字だけ取り出す。

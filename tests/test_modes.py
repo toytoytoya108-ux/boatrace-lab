@@ -46,6 +46,7 @@ def test_ana_fires_only_on_rough_race():
     assert rough["points"] == [int(i) for i in order[19:40]]
     safe = select_ana(_lane1_heavy(0.8), prm)       # 1号艇が堅い＝万舟確率が低い
     assert not safe["fired"] and safe["reason"] == "q_man_low"
+    assert len(safe["points"]) == 21                # 見送りでも「買うならこれ」は返す（仮想採点用）
     assert not select_ana(np.full(120, np.nan), prm)["fired"]
     assert not select_ana(_flat(), ModeParams(ana_enabled=False))["fired"]
 
@@ -73,7 +74,8 @@ def test_katai_trims_from_tail_and_respects_confidence():
     r = select_katai(main, odds, 0.75, prm)
     assert r["fired"] and r["points"] == main[: len(r["points"])] and r["stake_total"] <= 3000
     assert r["min_payout"] >= 3000
-    assert not select_katai(main, odds, 0.5, prm)["fired"]
+    low = select_katai(main, odds, 0.5, prm)
+    assert not low["fired"] and low["reason"] == "confidence_low" and len(low["points"]) == len(r["points"])
     odds[:10] = [1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]  # 本命が安すぎ、3点も成立しない
     r = select_katai(main, odds, 0.9, prm)
     assert not r["fired"] and r["reason"] == "too_few_points"

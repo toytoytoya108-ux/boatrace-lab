@@ -8,6 +8,7 @@ train          : 前日までのデータで Predictor を学習して保存・�
 """
 from __future__ import annotations
 import json
+import re
 
 import logging
 from datetime import date, datetime, timedelta
@@ -331,8 +332,10 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
                                                       tansho=dict(fired=False, reason="odds_estimated"))
         fk, tn = pl["fukusho"], pl["tansho"]
         fired = bool(fk["fired"] or tn["fired"])
-        sels = ([dict(combo=str(fk["lane"]), kind="fukusho", stake=fk["stake"], prob=fk["q"], odds=None)] if fk["fired"] else []) + \
-               ([dict(combo=str(tn["lane"]), kind="tansho", stake=tn["stake"], prob=tn["q"], odds=None)] if tn["fired"] else [])
+        # 発火した券種だけを買い目にする。両方とも見送りなら「買うならこれ」として両方を参考記録
+        # combo は主キーの一部なので複勝・単勝で同じ艇でもぶつからないよう「複1」「単1」の形にする
+        sels = ([dict(combo=f"複{fk['lane']}", kind="fukusho", stake=fk["stake"], prob=fk["q"], odds=None)] if (fk["fired"] or not fired) and "lane" in fk else []) + \
+               ([dict(combo=f"単{tn['lane']}", kind="tansho", stake=tn["stake"], prob=tn["q"], odds=None)] if (tn["fired"] or not fired) and "lane" in tn else [])
         _add("place", fired, (None if fired else (fk.get("reason") or "q_low")),
              dict(fukusho=fk, tansho=tn, n_points=len(sels), stake_total=int(sum(x["stake"] for x in sels))),
              sels,
@@ -365,7 +368,7 @@ def score_place(sels, payouts: dict | None, refund_lanes: list, cancelled: bool 
     stake_total = payout_total = ref_pts = ref_stake = 0
     hit_kind = None
     for x in sels:
-        lane = int(str(x.combo).strip())
+        lane = int(re.sub(r"\D", "", str(x.combo)))        # 「複1」「単1」→ 1
         if lane in refund:
             ref_pts += 1
             ref_stake += int(x.stake)
