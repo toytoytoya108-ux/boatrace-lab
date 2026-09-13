@@ -491,3 +491,73 @@ def record_pool_gap(odds3t: dict, win_odds: dict | None, place_odds: dict | None
         except IntegrityError:
             pass          # 同じレース・券種・艇・段階は1回だけ（再実行しても増えない）
     return n
+
+
+# ---------------------------------------------------------------- 直前版（締切2〜4分前のオッズで穴・複勝単勝を再選定）
+def record_late_modes(race_id: int, odds3t: dict, now: datetime, minutes_before: float, odds_snapshot_id: int | None = None) -> int:
+    """締切2〜4分前に取り直した3連単オッズで、穴・複勝単勝を role='ana_late'/'place_late' として追記する。
+
+    **表示には使わない。** 目的は「締切8分前の帯 → 3分前の帯 → 確定の帯」がどれだけ入れ替わるかと、
+    直前版の仮想回収率を測ること（2026-09-13 開始）。本体の確定予想（role='active'）が無いレースは何もしない。
+    採点は flags.mode（'ana'/'place'）で既存の経路に乗る。"""
+    with session_scope() as s:
+        base = s.execute(select(Prediction).where(Prediction.race_id == race_id, Prediction.stage == "final",
+                                                 Prediction.role == "active").order_by(Prediction.id.desc())).scalars().first()
+        if base is None:
+            return 0
+        done = {rl for (rl,) in s.execute(select(Prediction.role).where(
+            Prediction.race_id == race_id, Prediction.stage == "final", Prediction.role.in_(("ana_late", "place_late"))))}
+        early = {p.role: p for p in s.execute(select(Prediction).where(
+            Prediction.race_id == race_id, Prediction.stage == "final", Prediction.role.in_(("ana", "place")))).scalars()}
+        early_sel = {rl: [x.combo for x in s.execute(select(PredictionSelection).where(
+            PredictionSelection.prediction_id == p.id)).scalars()] for rl, p in early.items()}
+        r = s.get(Race, race_id)
+        srow = _settings_row(s)
+        prm = modes_from_settings(srow)
+        oarr = np.array([np.nan if odds3t.get(k) is None else float(odds3t[k]) for k in _PL])
+        real = int(np.isfinite(oarr).sum()) >= 100
+        tags = race_tags(base.boat_eval, r.stadium_code, getattr(r, "title", None), getattr(r, "race_type", None),
+                         market_probs(oarr) if real else None)
+        common = dict(race_id=race_id, model_version=base.model_version, settings_id=srow.id, stage="final",
+                      created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at, features_used=None,
+                      odds_snapshot_id=odds_snapshot_id, completeness=base.completeness, missing_fields=None,
+                      boat_eval=base.boat_eval, probs=base.probs,
+                      odds_used={k: (None if not np.isfinite(v) else float(v)) for k, v in zip(_PL, oarr)},
+                      ev=base.ev, confidence=base.confidence, rationale=base.rationale, input_hash=base.input_hash)
+        n = 0
+
+        def _add(role, mode, fired, reason, flags, sels, text):
+            p = Prediction(**common, role=role, expected_return=0.0, decision=("buy" if fired else "skip"),
+                           skip_reason=(None if fired else reason),
+                           flags={"odds_estimated": not real, "mode": mode, "late": True, "minutes_before": round(minutes_before, 1),
+                                  "modes_version": MODES_VERSION, "params": prm.to_dict(), "tags": tags["rough"],
+                                  "solid_tags": tags["solid"], **flags},
+                           rationale_text=text)
+            s.add(p); s.flush()
+            for k, x in enumerate(sels):
+                s.add(PredictionSelection(prediction_id=p.id, combo=x["combo"], rank=k + 1, kind=x["kind"], stake=int(x["stake"]),
+                                          prob=x.get("prob"), odds_at_pred=x.get("odds"), odds_source=("real" if real else "estimated"), ev=None))
+
+        if "ana_late" not in done:
+            a = select_ana(oarr, prm) if real else dict(fired=False, reason="odds_estimated", points=[], stakes=[])
+            combos = [_PL[j] for j in a["points"]]
+            ov = len(set(combos) & set(early_sel.get("ana", []))) if combos else None
+            _add("ana_late", "ana", a["fired"], a["reason"],
+                 dict(q_man=a.get("q_man"), n_points=len(combos), stake_total=int(sum(a["stakes"])), overlap_with_early=ov,
+                      early_decision=(early["ana"].decision if "ana" in early else None)),
+                 [dict(combo=c0, kind="ana", stake=st, prob=q, odds=od)
+                  for c0, st, q, od in zip(combos, a["stakes"], a.get("q", []), a.get("odds", []))],
+                 f"穴狙い（直前版 {minutes_before:.1f}分前）: " + (f"人気{prm.ana_rank_lo}〜{prm.ana_rank_hi} {len(combos)}点、8分前との重なり {ov}" if a["fired"] else f"見送り（{a['reason']}）"))
+            n += 1
+        if "place_late" not in done:
+            pl = select_place(oarr, prm) if real else dict(fukusho=dict(fired=False, reason="odds_estimated"), tansho=dict(fired=False, reason="odds_estimated"))
+            fk, tn = pl["fukusho"], pl["tansho"]
+            fired = bool(fk["fired"] or tn["fired"])
+            sels = ([dict(combo=f"複{fk['lane']}", kind="fukusho", stake=fk["stake"], prob=fk["q"], odds=None)] if (fk["fired"] or not fired) and "lane" in fk else []) + \
+                   ([dict(combo=f"単{tn['lane']}", kind="tansho", stake=tn["stake"], prob=tn["q"], odds=None)] if (tn["fired"] or not fired) and "lane" in tn else [])
+            _add("place_late", "place", fired, (None if fired else (fk.get("reason") or "q_low")),
+                 dict(fukusho=fk, tansho=tn, n_points=len(sels), stake_total=int(sum(x["stake"] for x in sels)),
+                      early_decision=(early["place"].decision if "place" in early else None)),
+                 sels, f"複勝・単勝（直前版 {minutes_before:.1f}分前）: " + ("発火" if fired else "見送り"))
+            n += 1
+        return n

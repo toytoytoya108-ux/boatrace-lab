@@ -539,3 +539,14 @@ l1_b・kado・l1_ext4（★事前登録）・rough_stadium・maezuke・top1_12�
   買い方の自動研究（/api/research）、モデル版・バックテスト（/api/models, /api/backtests）、実戦投入判定（/api/readiness）、
   校正（/api/stats/calibration）。ナビの「モデル」タブは削除。
 - 出荷前チェック: 59 tests、本番DBコピーで全API 200、Playwright 390px で5画面（横スクロールなし・JSエラーなし）、CLI を CliRunner で実行。
+
+## 直前版の記録（2026-09-13〜、`daily.record_late_modes`、`lab late-drift`）
+
+- 締切2〜4分前に3連単オッズをもう一度取り（1日約160回追加、上限1,000回の内）、穴・複勝単勝を
+  **role='ana_late'/'place_late'** として追記する。`flags.late=True`、`flags.minutes_before`、`flags.overlap_with_early`
+  （8分前の帯との重なり本数）、`flags.early_decision`。採点は flags.mode（'ana'/'place'）で既存経路。
+- **表示には使わない。** 目的は「8分前の帯 → 3分前の帯 → 確定の帯」の入れ替わりと、直前版の仮想回収率の測定。
+  穴モードの実測83.3%は確定オッズの数字なので、取得が確定に近いほど近づくはず。一方で21点の入力時間が要る。
+  1週間ほど貯めて `lab late-drift` の数字で予想の時刻を動かすかを決める。
+- 現行の確定予想が締切4〜10分前なのは旧絞り込み型（最大5点）の入力時間として決めた名残。取得回数の制限は理由ではない。
+- 以前の「直前の変動」の数字は3連単の帯のものではない: 中央値−50%は単勝複勝の極端な1点の選定、約6ptは複勝の確信度。

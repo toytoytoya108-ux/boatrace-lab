@@ -677,3 +677,66 @@ def dump_odds3t(stadium: int = typer.Option(..., "--stadium"), race: int = typer
     typer.echo("  艇番でも数値でもないセル（出現回数）:")
     for k, n in top:
         typer.echo(f"    ×{n}  {k}")
+
+
+@app.command()
+def late_drift(days: int = typer.Option(14, "--days", help="直近何日分を見るか")):
+    """締切8分前の帯 → 3分前の帯 → 確定の帯 の入れ替わりと、8分前版／直前版の仮想回収率を比べる。
+
+    予想の時刻を2〜4分前に動かすべきかを数字で決めるための材料（2026-09-13〜記録）。"""
+    import json as _json
+
+    import numpy as np
+    from sqlalchemy import text as _text
+
+    from boatlab.model.trifecta import PERM_LABELS as _PL
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    eng = get_engine()
+    since = str((now_jst() - __import__("datetime").timedelta(days=days)).date())
+    with eng.connect() as c:
+        rows = c.execute(_text("""
+            SELECT p.race_id, p.role, p.decision, p.flags, sc.valid, sc.stake_total, sc.payout_total, sc.hit,
+                   (SELECT o.odds FROM odds_snapshots o WHERE o.race_id=p.race_id AND o.bet_type='3t' AND o.source='turnmark_final' LIMIT 1) fin
+            FROM predictions p JOIN races r ON r.id=p.race_id LEFT JOIN scoring sc ON sc.prediction_id=p.id
+            WHERE r.race_date >= :d AND p.stage='final' AND p.role IN ('ana','ana_late')""" ), {"d": since}).mappings().all()
+        sels = {}
+        for pid, rid, role, combo in c.execute(_text("""
+            SELECT p.id, p.race_id, p.role, ps.combo FROM predictions p JOIN prediction_selections ps ON ps.prediction_id=p.id
+            JOIN races r ON r.id=p.race_id WHERE r.race_date >= :d AND p.role IN ('ana','ana_late')"""), {"d": since}):
+            sels.setdefault((rid, role), set()).add(combo)
+    by = {}
+    for x in rows:
+        by.setdefault(x["race_id"], {})[x["role"]] = dict(x)
+    pairs = [(rid, v["ana"], v["ana_late"]) for rid, v in by.items() if "ana" in v and "ana_late" in v]
+    typer.echo(f"直近{days}日: 8分前版と直前版の両方があるレース {len(pairs)}")
+    if not pairs:
+        raise typer.Exit()
+    ov_el, ov_ef, ov_lf, fired_agree = [], [], [], 0
+    roi = {"ana": [0, 0, 0], "ana_late": [0, 0, 0]}
+    for rid, e, l in pairs:
+        se, sl = sels.get((rid, "ana"), set()), sels.get((rid, "ana_late"), set())
+        if se and sl:
+            ov_el.append(len(se & sl))
+        fin = e["fin"]
+        if fin:
+            d0 = _json.loads(fin) if isinstance(fin, str) else fin
+            inv = np.array([1.0 / float(d0[k]) if d0.get(k) else 0.0 for k in _PL])
+            if (inv > 0).sum() >= 100:
+                q = inv / inv.sum()
+                sf = {_PL[int(i)] for i in np.argsort(-q)[19:40]}
+                if se:
+                    ov_ef.append(len(se & sf))
+                if sl:
+                    ov_lf.append(len(sl & sf))
+        fired_agree += (e["decision"] == l["decision"])
+        for k, x in (("ana", e), ("ana_late", l)):
+            if x["decision"] == "buy" and x["valid"]:
+                roi[k][0] += 1; roi[k][1] += int(x["stake_total"] or 0); roi[k][2] += int(x["payout_total"] or 0)
+    def m(v): return f"{np.mean(v):.1f}/21" if v else "—"
+    typer.echo(f"  発火の一致（両方発火 or 両方見送り）: {fired_agree}/{len(pairs)}")
+    typer.echo(f"  人気20〜40の帯の重なり: 8分前↔直前 {m(ov_el)}  8分前↔確定 {m(ov_ef)}  直前↔確定 {m(ov_lf)}")
+    for k, nm in (("ana", "8分前版（表示している予想）"), ("ana_late", "直前版（記録のみ）")):
+        n, st, pay = roi[k]
+        typer.echo(f"  {nm}: 発火・採点済 {n}R  回収率 {pay/st*100 if st else 0:.1f}%")
+    typer.echo("  ※ 確定との重なりは翌朝06:10の確定オッズ取込後に埋まります")

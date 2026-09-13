@@ -35,7 +35,7 @@ from boatlab.ingest.history import ingest_turnmark_day, make_fetcher
 from boatlab.ingest.official_web import fetch_odds3t, fetch_oddstf
 from boatlab.model.pipeline import Predictor
 from boatlab.model.selection import SelectionParams
-from boatlab.ops.daily import ingest_today, predict_pending, record_pool_gap, score_pending, train_and_register
+from boatlab.ops.daily import ingest_today, predict_pending, record_late_modes, record_pool_gap, score_pending, train_and_register
 from boatlab.store.db import init_db, session_scope
 from boatlab.store.models import JobRun, ModelVersion, OddsSnapshot, Race
 from boatlab.store.writer import write_bundle
@@ -187,6 +187,21 @@ class Scheduler:
                 mins = (r.closed_at - now).total_seconds() / 60
                 if 2 <= mins <= 4:
                     self.tf_late_done.add(r.id)
+                    # 3連単を取り直して、穴・複勝単勝の「直前版」を記録する（表示には使わない。2026-09-13〜）
+                    try:
+                        rec3 = fetch_odds3t(self.fetcher, d, r.stadium_code, r.race_no)
+                        if rec3 is not None:
+                            from boatlab.ingest.records import DayBundle
+                            with session_scope() as s:
+                                write_bundle(s, DayBundle(odds=[rec3]))
+                            out.setdefault("odds_late", 0)
+                            out["odds_late"] += 1
+                            out.setdefault("late_modes", 0)
+                            out["late_modes"] += record_late_modes(r.id, rec3.odds, now, mins)
+                    except FetchLimitExceeded:
+                        log.warning("official odds daily limit reached")
+                    except Exception as e:
+                        log.warning("odds3t(late) failed %s: %r", r.id, e)
                     if not pg_on:
                         continue
                     try:
