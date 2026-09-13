@@ -92,7 +92,7 @@ def _q(sql: str, **params) -> list[dict]:
     return out
 
 
-ROLE_OF_MODE = {"std": "active", "focused": "focused", "ana": "ana", "katai": "katai", "place": "place"}
+ROLE_OF_MODE = {"std": "active", "focused": "focused", "ana": "ana", "katai": "katai", "katai_t": "katai_t", "place": "place"}
 
 
 def _role(mode: str | None) -> str:
@@ -498,7 +498,7 @@ def modes(d: str | None = None, _=Depends(require_auth)):
     st = _settings()
     prm = ModeParams.from_dict((st.get("extra") or {}).get("modes")).to_dict()
     out = {"date": str(day), "modes_version": MODES_VERSION, "params": prm, "modes": {}}
-    for role in ("ana", "katai", "place"):
+    for role in ("ana", "katai", "katai_t", "place"):
         today_rows = _q("""
             SELECT r.id, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.flags, p.rationale_text,
                    (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,

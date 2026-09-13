@@ -17,7 +17,7 @@
 .app{max-width:640px;margin:0 auto;padding:0 12px calc(72px + env(safe-area-inset-bottom))}
 header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:3px solid var(--mode)}
 header h1{margin:0;font-size:16px;font-weight:800;letter-spacing:.02em;white-space:nowrap}header .sub{font-size:11px;color:var(--ink2);font-family:var(--mono);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.modeTog{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto;background:var(--sf)}.modeTog button{font:inherit;font-size:12px;font-weight:700;line-height:1.15;border:0;background:none;color:var(--ink2);padding:4px 10px;min-height:38px;display:flex;flex-direction:column;align-items:center;justify-content:center}.modeTog button small{font-size:9px;font-weight:400;opacity:.85}.modeTog button.on{background:var(--mode);color:#fff}
+.modeTog{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto;background:var(--sf)}.modeTog button{font:inherit;font-size:11.5px;font-weight:700;line-height:1.15;border:0;background:none;color:var(--ink2);padding:4px 7px;min-height:38px;white-space:nowrap;display:flex;flex-direction:column;align-items:center;justify-content:center}.modeTog button small{font-size:9px;font-weight:400;opacity:.85}.modeTog button.on{background:var(--mode);color:#fff}
 .modeBar{display:flex;flex-direction:column;align-items:stretch;gap:8px;background:var(--modebg);border-left:4px solid var(--mode);border-radius:10px;padding:10px 12px;margin:10px 0}.modeBar .t{flex:1;min-width:0;width:100%}.modeBar .btns{display:flex;gap:6px;flex-wrap:wrap}.modeBar .t b{color:var(--mode);font-size:15px}.modeBar .t small{display:block;color:var(--ink2);font-size:12px}.modeBar button{flex:0 0 auto;font:inherit;font-size:12px;border:1px solid var(--mode);background:var(--sf);color:var(--mode);border-radius:8px;padding:6px 10px;min-height:36px}
 .stg{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stg .st{background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;position:relative}.stg .st.wide{grid-column:1/-1;display:flex;align-items:center;gap:10px}.stg .st b.nm{font-size:16px}.stg .st .g{font-size:11px;color:var(--ink2);margin-left:4px}.stg .st .ln{font-size:12px;color:var(--ink2);margin-top:2px}.stg .st .rec{position:absolute;right:10px;top:9px;font-family:var(--mono);font-size:12px;color:#fff;background:var(--mode);border-radius:999px;padding:1px 8px}.stg .st.done{opacity:.75}.stg .st .pl{font-family:var(--mono);font-size:12px}.stg .st .pl.pos{color:var(--ok)}.stg .st .pl.neg{color:var(--ng)}
 .crumb{display:flex;align-items:center;gap:8px;margin:6px 0 2px}.crumb button{font:inherit;font-size:13px;border:0;background:none;color:var(--acc);padding:6px 4px 6px 0;min-height:36px}.crumb b{font-size:16px}
@@ -72,7 +72,7 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 </head>
 <body>
 <div class="app" id="app">
-  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ana">穴狙い<small>3連単</small></button><button data-m="katai">堅い予想<small>3連単</small></button><button data-m="place">複勝・単勝<small>的中率重視</small></button></div></header>
+  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ana">穴狙い<small>3連単</small></button><button data-m="katai">堅い予想<small>保証つき</small></button><button data-m="katai_t">堅い·厚め<small>10点固定</small></button><button data-m="place">複勝·単勝<small>的中率</small></button></div></header>
   <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
   <main id="main"></main>
 </div>
@@ -95,13 +95,14 @@ const fmtLoss = v => v >= 10000 ? `約${(v / 10000).toFixed(1)}万円` : `約${f
 let saved = {}; try { saved = JSON.parse(localStorage.getItem("bl_state") || "{}"); } catch (e) {}
 const state = Object.assign({ view: "home", raceId: null, day: null, mode: "ana", rv: "stadiums", statsBy: "month", statsRange: "all",
   f: { stadium: "", dec: "buy" } }, saved);
-const MAIN_MODES = ["ana", "katai", "place"];
+const MAIN_MODES = ["ana", "katai", "katai_t", "place"];
 if (!MAIN_MODES.includes(state.mode)) state.mode = "ana";
 function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, rv: state.rv, statsBy: state.statsBy })); } catch (e) {} }
-const MODE_ROLE = { ana: "ana", katai: "katai", place: "place" };
-const MODE_NAME = { ana: "3連単（穴狙い）", katai: "3連単（堅い予想）", place: "複勝・単勝", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
+const MODE_ROLE = { ana: "ana", katai: "katai", katai_t: "katai_t", place: "place" };
+const MODE_NAME = { ana: "3連単（穴狙い）", katai: "3連単（堅い予想・保証つき）", katai_t: "3連単（堅い予想・上位厚め）", place: "複勝・単勝", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
 const MODE_ONE = { ana: "市場が荒れると見ているレースだけ、人気20〜40番目の3連単21点を100円ずつ",
   katai: "本線を「当たれば必ず投資額以上」が成り立つ点数まで削って買う（信頼度0.70以上のレースのみ）",
+  katai_t: "本線10点を3,000円固定で、1点目に厚く（1,000/500/300/300/200/200/200/100/100/100円）。当たっても赤字の回がある代わりに回収率は高め",
   place: "市場がいちばん確信している艇を1点。複勝は2着以内確率0.90以上、単勝は1着確率0.771以上" };
 const REASON = { confidence: "信頼度が基準未満", confidence_low: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得",
   odds_estimated: "実オッズ未取得", odds_missing: "実オッズ未取得", q_man_low: "市場が荒れると見ていない", q_low: "市場の確信度が基準未満",
@@ -170,6 +171,7 @@ function planOf(r) {
   if (r.decision !== "buy") return `<span class="muted">見送り · ${REASON[r.skip_reason] || r.skip_reason || ""}</span>`;
   if (state.mode === "ana") return `${r.n_points}点 ${fmtN(r.stake_plan)}円`;
   if (state.mode === "katai") return `${r.n_points}点 ${fmtN(r.stake_plan)}円${f.min_payout ? ` <small class="muted">当たれば${fmtN(f.min_payout)}円以上</small>` : ""}`;
+  if (state.mode === "katai_t") return `${r.n_points}点 ${fmtN(r.stake_plan)}円 <small class="muted">1点目に厚く</small>`;
   const fk = f.fukusho || {}, tn = f.tansho || {};
   return [fk.fired ? `複勝 ${fk.lane}号艇` : null, tn.fired ? `単勝 ${tn.lane}号艇` : null].filter(Boolean).join(" / ") + ` ${fmtN(r.stake_plan)}円`;
 }
@@ -389,19 +391,22 @@ async function renderSettings(m) {
       <h3>3連単（堅い予想）</h3>
       <div class="two">${num("k_budget", "1レース予算＝保証する最低払戻（円）", mp.katai_budget, 500)}${num("k_conf", "信頼度の下限", mp.katai_confidence_min, 0.01)}</div>
       <div class="two">${num("k_max", "本線の最大点数", mp.katai_points_max, 1)}${num("k_min", "成立に必要な最小点数", mp.katai_points_min, 1)}</div>
+      <h3>3連単（堅い予想・上位厚め）</h3>
+      <div class="two">${num("kt_points", "点数（固定）", mp.katai_t_points, 1)}${num("kt_total", "合計（円・固定）", mp.katai_t_total, 500)}</div>
       <h3>複勝・単勝</h3>
       <div class="two">${num("p_fk", "複勝: 市場の2着以内確率の下限", mp.fukusho_q_min, 0.01)}${num("p_tn", "単勝: 市場の1着確率の下限", mp.tansho_q_min, 0.01)}</div>
       ${num("p_stake", "1点（円）", mp.place_stake, 100)}
       <p class="muted">しきい値は確定オッズで決めた値です。締切前オッズでは市場の確信度が低めに出るので、記録が貯まったら締切前基準で見直します。</p>
       <p><button class="btn" id="save" style="width:100%">保存（新しい設定版として記録）</button></p></div></details>
     <details class="sec" open><summary>データの書き出し（CSV）</summary><div class="card"><p class="muted" style="margin-top:0">採点済みの記録。分析を依頼するときはこのファイルを渡してください。</p>
-      ${dl("ana", "3連単（穴狙い）")}${dl("katai", "3連単（堅い予想）")}${dl("place", "複勝・単勝")}
+      ${dl("ana", "3連単（穴狙い）")}${dl("katai", "3連単（堅い・保証つき）")}${dl("katai_t", "3連単（堅い・上位厚め）")}${dl("place", "複勝・単勝")}
       <p class="muted" style="margin:10px 0 4px">旧モード（画面からは外しましたが記録は続いています）</p>${dl("focused", "絞り込み型（旧）")}${dl("std", "15点固定（旧）")}</div></details>
     <details class="sec"><summary>このツールについて</summary><div class="card muted">自動購入はしません。設定は自動で変わりません。予想は締切前に保存され、あとから書き換えられません（追記専用）。見送りレースも仮想で採点します。<br>過去の研究（reports/）: 単勝・複勝プールの歪み、買い方の自動研究、絞り込み型などは記録・API を残したまま画面から外しています。</div></details>`;
   $("#save").onclick = async () => {
     const g = id => +$("#" + id).value;
     const modes = Object.assign({}, mp, { ana_qman_min: g("ana_q"), ana_stake: g("ana_stake"), ana_rank_lo: g("ana_lo"), ana_rank_hi: g("ana_hi"),
       katai_budget: g("k_budget"), katai_confidence_min: g("k_conf"), katai_points_max: g("k_max"), katai_points_min: g("k_min"),
+      katai_t_points: g("kt_points"), katai_t_total: g("kt_total"),
       fukusho_q_min: g("p_fk"), tansho_q_min: g("p_tn"), place_stake: g("p_stake") });
     await api("/api/settings", { method: "PUT", body: JSON.stringify({ extra: Object.assign({}, ex, { modes }) }) });
     MODES_CACHE.key = null; alert("保存しました"); render();

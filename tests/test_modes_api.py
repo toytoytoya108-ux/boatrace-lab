@@ -56,7 +56,7 @@ def test_modes_endpoint(client):
     r = tc.get("/api/modes", headers=h)
     assert r.status_code == 200, r.text
     j = r.json()
-    assert set(j["modes"]) == {"ana", "katai", "place"} and j["params"]["fukusho_q_min"] == 0.90
+    assert set(j["modes"]) == {"ana", "katai", "katai_t", "place"} and j["params"]["fukusho_q_min"] == 0.90
     pl = j["modes"]["place"]
     assert pl["today"]["n_fired"] == 1 and pl["today"]["hits"] == 1 and pl["today"]["pnl"] == 10
     assert pl["cumulative"]["n"] == 1 and pl["cumulative"]["roi"] == pytest.approx(1.1)

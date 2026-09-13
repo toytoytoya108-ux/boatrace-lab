@@ -33,6 +33,8 @@ MEASURED = {
                 per_day=14.0, stake_per_race=2100, source="condition_rules.md §4"),
     "katai": dict(roi=0.814, roi_lo=0.79, roi_hi=0.84, hit=0.662, avg_payout=3360, max_lose=None,
                   per_day=4.5, stake_per_race=2841, loss_on_hit=0.010, source="no_hit_loss.md"),
+    "katai_t": dict(roi=0.836, roi_lo=0.80, roi_hi=0.87, hit=0.700, avg_payout=3150, max_lose=6,
+                    per_day=4.5, stake_per_race=3000, loss_on_hit=0.469, source="no_hit_loss.md（P. 10点・確率比例）"),
     "fukusho": dict(roi=0.993, roi_lo=0.98, roi_hi=1.01, hit=0.946, avg_payout=105, max_lose=2,
                     per_day=10.6, stake_per_race=100, source="condition_rules.md §3"),
     "tansho": dict(roi=0.948, roi_lo=0.93, roi_hi=0.96, hit=0.850, avg_payout=112, max_lose=None,
@@ -52,6 +54,9 @@ class ModeParams:
     katai_points_max: int = 10
     katai_points_min: int = 3           # これ未満しか成立しないなら「堅い予想」ではないので見送り
     katai_confidence_min: float = 0.70  # 本体の購入判定と同じ
+    katai_t_enabled: bool = True        # 堅い予想（上位厚め）: 本線10点固定・合計固定・順位に反比例した配分
+    katai_t_points: int = 10
+    katai_t_total: int = 3000
     fukusho_enabled: bool = True
     fukusho_q_min: float = 0.90         # 市場の2着以内確率
     tansho_enabled: bool = True
@@ -135,6 +140,35 @@ def select_katai(main_idx: list[int], odds3t: np.ndarray, confidence: float, prm
     return dict(fired=bool(fired), reason=(None if fired else "confidence_low"), points=main[:k],
                 stakes=[int(x) for x in st], odds=[float(o) for o in odds[:k]],
                 min_payout=int(min(st[i] * odds[i] for i in range(k))), stake_total=int(st.sum()))
+
+
+def top_heavy_stakes(n: int, total: int) -> list[int]:
+    """順位に反比例した配分（1位に厚く）。100円単位で合計 total。`no_hit_loss.md` の P と同じ作り。"""
+    if n <= 0:
+        return []
+    w = np.array([1.0 / (i + 1) for i in range(n)])
+    units = total // UNIT
+    u = np.maximum(1, np.floor(w / w.sum() * units)).astype(int)
+    while u.sum() > units:
+        u[int(np.argmax(u))] -= 1
+    while u.sum() < units:
+        u[int(np.argmax(w / u))] += 1
+    return [int(x) * UNIT for x in u]
+
+
+def select_katai_top(main_idx: list[int], odds3t: np.ndarray, confidence: float, prm: ModeParams) -> dict:
+    """堅い予想（上位厚め）: 本線をそのまま固定点数、合計固定、順位に反比例した配分。
+    オッズは表示用で、選定・配分には使わない（推定オッズのレースでも発火する）。"""
+    if not prm.katai_t_enabled:
+        return dict(fired=False, reason="disabled", points=[], stakes=[])
+    main = [int(i) for i in main_idx][: prm.katai_t_points]
+    if not main:
+        return dict(fired=False, reason="odds_missing", points=[], stakes=[])
+    st = top_heavy_stakes(len(main), prm.katai_t_total)
+    fired = confidence >= prm.katai_confidence_min
+    o = np.asarray(odds3t, float)
+    return dict(fired=bool(fired), reason=(None if fired else "confidence_low"), points=main, stakes=st,
+                odds=[(float(o[i]) if np.isfinite(o[i]) else None) for i in main], stake_total=int(sum(st)))
 
 
 # ---------------------------------------------------------------- 複勝・単勝

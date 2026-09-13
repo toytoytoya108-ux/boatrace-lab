@@ -495,7 +495,7 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
                    (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id=p.id) stake,
                    sc.valid, sc.hit, sc.pnl
             FROM predictions p JOIN races r ON r.id=p.race_id LEFT JOIN scoring sc ON sc.prediction_id=p.id
-            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ana','katai','place')
+            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ana','katai','katai_t','place')
             ORDER BY p.role, r.closed_at""" ), {"d": str(d)}).mappings().all()
     if not rows:
         typer.echo("  記録なし（確定予想は各レースの締切4〜10分前に保存されます）")
@@ -503,7 +503,7 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
     est = sum(1 for x in rows if x["role"] == "ana" and x["skip_reason"] == "odds_estimated")
     n_ana = sum(1 for x in rows if x["role"] == "ana")
     typer.echo(f"  実オッズで作られたレース {n_ana - est} / 推定オッズ（市場ベースの2モードは見送り） {est}")
-    for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("place", "複勝・単勝")):
+    for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("katai_t", "3連単（堅い・上位厚め）"), ("place", "複勝・単勝")):
         rs = [x for x in rows if x["role"] == role]
         fired = [x for x in rs if x["decision"] == "buy"]
         scored = [x for x in fired if x["valid"]]

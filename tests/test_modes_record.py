@@ -51,10 +51,12 @@ def test_record_and_score_modes(db):
     o = _fake_o(odds)
     with db.session_scope() as s:
         r = s.get(mm.Race, 202609120101)
-        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "place": set()})
+        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
     with db.session_scope() as s:
         rows = {p.role: p for p in s.query(mm.Prediction).all()}
-        assert set(rows) == {"ana", "katai", "place"}
+        assert set(rows) == {"ana", "katai", "katai_t", "place"}
+        kt = s.query(mm.PredictionSelection).filter_by(prediction_id=rows["katai_t"].id).order_by(mm.PredictionSelection.rank).all()
+        assert rows["katai_t"].decision == "buy" and [x.stake for x in kt] == [1000, 500, 300, 300, 200, 200, 200, 100, 100, 100]
         assert rows["ana"].decision == "buy" and rows["ana"].flags["n_points"] == 21
         assert rows["katai"].decision == "buy" and rows["katai"].flags["min_payout"] >= 3000
         assert rows["place"].decision == "skip"                       # 荒れる分布なので複勝・単勝は見送り
@@ -72,7 +74,7 @@ def test_record_and_score_modes(db):
     o2 = {**_fake_o(odds, estimated=True), "race_id": 202609120102}
     with db.session_scope() as s:
         r = s.get(mm.Race, 202609120102)
-        dl._record_modes(s, o2, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "place": set()})
+        dl._record_modes(s, o2, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
     with db.session_scope() as s:
         p = s.query(mm.Prediction).filter_by(race_id=202609120102, role="ana").one()
         assert p.decision == "skip" and p.skip_reason == "odds_estimated"
@@ -122,7 +124,7 @@ def test_record_late_modes(db):
                             post_time_at_pred=r.closed_at, features_used=None, completeness=1.0, boat_eval={}, probs=o["probs"],
                             odds_used=o["odds_used"], ev={}, confidence=0.8, expected_return=0.0, decision="buy", rationale={"summary": "x"},
                             rationale_text="x", input_hash="h"))
-        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "place": set()})
+        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
     # 直前のオッズ: 人気順を少し入れ替える（上位20通りの一部を入れ替え）
     late = {PERM_LABELS[i]: float(odds[i]) for i in range(120)}
     order = np.argsort(1.0 / odds)[::-1]  # 確率の高い順（オッズ低い順）
@@ -142,7 +144,7 @@ def test_record_late_modes(db):
         s.add(mm.Result(race_id=rid, trifecta=PERM_LABELS[int(order[25])], trifecta_payout=12000, payouts={"place": [], "win": []},
                         refunds=[], is_irregular=False, source="t", fetched_at=now + timedelta(minutes=30)))
     n = dl.score_pending()["scored"]
-    assert n >= 5
+    assert n >= 6
     with db.session_scope() as s:
         p = s.query(mm.Prediction).filter_by(race_id=rid, role="ana_late").one()
         sc = s.get(mm.Scoring, p.id)

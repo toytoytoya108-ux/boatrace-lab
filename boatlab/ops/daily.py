@@ -25,7 +25,8 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
-from boatlab.model.modes import MODES_VERSION, ModeParams, market_probs, race_tags, select_ana, select_katai, select_place
+from boatlab.model.modes import (MODES_VERSION, ModeParams, market_probs, race_tags, select_ana, select_katai,
+                                 select_katai_top, select_place)
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
@@ -158,7 +159,7 @@ def modes_from_settings(row: SettingsVersion) -> ModeParams:
     return ModeParams.from_dict((row.extra or {}).get("modes"))
 
 
-MODE_ROLES = ("ana", "katai", "place")
+MODE_ROLES = ("ana", "katai", "katai_t", "place")
 
 
 def staking_from_settings(row: SettingsVersion) -> StakingParams:
@@ -331,6 +332,14 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
               for j, st, od in zip(k["points"], k["stakes"], k.get("odds", []))],
              (f"堅い予想: 本線{len(k['points'])}点・{k.get('stake_total', 0)}円（当たれば{k.get('min_payout')}円以上）"
               if k["fired"] else f"堅い予想: 見送り（{k['reason']}）"))
+    if rid not in done_m["katai_t"]:
+        kt = select_katai_top(main_idx, oarr, float(o["confidence"]), prm)
+        _add("katai_t", kt["fired"], kt["reason"],
+             dict(n_points=len(kt["points"]), stake_total=int(kt.get("stake_total", 0))),
+             [dict(combo=_PL[j], kind="katai_t", stake=st, prob=float(o["probs"][_PL[j]]), odds=od)
+              for j, st, od in zip(kt["points"], kt["stakes"], kt.get("odds", []))],
+             (f"堅い予想（上位厚め）: 本線{len(kt['points'])}点・{kt.get('stake_total', 0)}円（1点目に厚く）"
+              if kt["fired"] else f"堅い予想（上位厚め）: 見送り（{kt['reason']}）"))
     if rid not in done_m["place"]:
         pl = select_place(oarr, prm) if real else dict(fukusho=dict(fired=False, reason="odds_estimated"),
                                                       tansho=dict(fired=False, reason="odds_estimated"))
@@ -418,7 +427,7 @@ def score_pending() -> dict:
                 stakes = [int(x.stake) for x in sels]
                 sc = score_race(sel_idx, main_idx, -1 if tri is None else tri, res.trifecta_payout, res.refunds or [],
                                 sels[0].stake if sels else 200, cancelled=(r.status == "cancelled"), stakes=stakes or None)
-                if mode in ("ana", "katai") and sc.get("hit"):
+                if mode in ("ana", "katai", "katai_t") and sc.get("hit"):
                     sc["hit_kind"] = mode
             valid = invalid is None and sc["valid"]
             hit = sc["hit"] if valid else None

@@ -114,3 +114,17 @@ def test_race_tags():
     t = race_tags({"1": {"klass": "A1", "exhibition_rank": 1}}, 24, "一般", "モーニング一般", None)
     assert t["rough"] == [] and t["solid"] == ["kikaku"]
     assert race_tags(None, None, None, None, None) == {"rough": [], "solid": []}
+
+
+
+def test_katai_top():
+    from boatlab.model.modes import select_katai_top, top_heavy_stakes
+    assert top_heavy_stakes(10, 3000) == [1000, 500, 300, 300, 200, 200, 200, 100, 100, 100]
+    assert sum(top_heavy_stakes(7, 3000)) == 3000 and all(x % 100 == 0 for x in top_heavy_stakes(7, 3000))
+    prm = ModeParams()
+    odds = np.full(120, np.nan)                     # 推定オッズ／欠損でも発火する（配分は順位だけで決まる）
+    r = select_katai_top(list(range(10)), odds, 0.75, prm)
+    assert r["fired"] and r["points"] == list(range(10)) and r["stake_total"] == 3000 and r["stakes"][0] == 1000
+    assert not select_katai_top(list(range(10)), odds, 0.5, prm)["fired"]
+    assert select_katai_top(list(range(10)), odds, 0.5, prm)["points"] == list(range(10))   # 見送りでも参考は返す
+    assert not select_katai_top([], odds, 0.9, prm)["fired"]
