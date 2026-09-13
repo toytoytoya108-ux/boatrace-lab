@@ -84,10 +84,21 @@ def main():
                 continue
             act = int(r.actual_idx) if pd.notna(r.actual_idx) else -1
             pay = float(r.actual_payout) if pd.notna(r.actual_payout) else 0.0
-            if cap is None:                                   # A/B: 10点固定
+            if cap is None:                                   # A/B/U/P: 10点固定
                 keep = np.arange(len(main))
                 o = odds[keep]
-                st = np.full(len(o), 100) if label.startswith("A") else stakes_payout_equal(o, 3000)
+                if label.startswith("A"):
+                    st = np.full(len(o), 100)
+                elif label.startswith("U"):                   # 10点 × 300円（3,000円固定・均等）
+                    st = np.full(len(o), 300)
+                elif label.startswith("P"):                   # 3,000円固定・確率比例（本線上位に厚く）、100円単位
+                    w = np.array([float(r.__getattribute__("main_probs")[j]) if hasattr(r, "main_probs") else 1.0 / (i + 1) for i, j in enumerate(keep)])
+                    u = np.maximum(1, np.floor(w / w.sum() * 30)).astype(int)
+                    while u.sum() > 30: u[np.argmax(u)] -= 1
+                    while u.sum() < 30: u[np.argmax(w / u)] += 1
+                    st = u * 100
+                else:
+                    st = stakes_payout_equal(o, 3000)
             else:                                             # C: 保証つき（cap = 1レース予算）
                 k, st = guaranteed(odds, int(cap))
                 if k == 0:
@@ -103,10 +114,11 @@ def main():
     L = [f"# 「当たったのにマイナス」をゼロにする設計（{len(rec):,}R・2026年・実オッズ）\n",
          "本線10点はテスト記録の選定（モデル確率順）をそのまま使う。払戻は公式の確定配当。",
          "払戻均等＝賭け金を 1/オッズ に比例させ、どの点が当たっても払戻がほぼ同額になる配分。\n",
-         "| 対象 | 方式 | 見送り | 平均点数 | 1レース投資 | 的中率 | 的中でも赤字 | 的中時払戻 中央値 | 回収率 | 95%区間 |",
-         "|---|---|---:|---:|---:|---:|---:|---:|---:|---|"]
+         "| 対象 | 方式 | 見送り | 平均点数 | 1レース投資 | 的中率 | 的中でも赤字 | 的中時払戻 中央値 | 回収率 | 95%区間 | 損益（期間合計） | 最長連敗 |",
+         "|---|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|"]
     for tgt, sub in (("全レース", rec), ("信頼度0.70以上（購入判定）", rec[rec["decision"] == "buy"])):
-        for cap, label in ((None, "A. 10点・100円均等（1,000円）"), (None, "B. 10点・払戻均等（3,000円）"),
+        for cap, label in ((None, "A. 10点・100円均等（1,000円）"), (None, "U. 10点・300円均等（3,000円固定）"),
+                           (None, "P. 10点・確率比例（3,000円固定）"), (None, "B. 10点・払戻均等（3,000円）"),
                            (2000, "C. 保証つき・予算2,000円"), (3000, "C. 保証つき・予算3,000円"),
                            (5000, "C. 保証つき・予算5,000円")):
             d = run(sub, cap, label)
@@ -116,10 +128,13 @@ def main():
             lo, hi = roi_bootstrap(b["stake"].values.astype(float), b["ret"].values, n_boot=400)
             hits = b[b["hit"]]
             loss_on_hit = float((hits["ret"] < hits["stake"]).mean()) if len(hits) else float("nan")
+            st_ = 0; best = 0
+            for h in b["hit"].values:
+                st_ = 0 if h else st_ + 1; best = max(best, st_)
             L.append(f"| {tgt} | {label} | {d['skip'].mean()*100:.1f}% | {b['k'].mean():.1f}点 | "
                      f"{b['stake'].mean():,.0f}円 | {b['hit'].mean()*100:.1f}% | **{loss_on_hit*100:.1f}%** | "
                      f"{hits['ret'].median():,.0f}円 | **{b['ret'].sum()/b['stake'].sum()*100:.1f}%** | "
-                     f"{lo*100:.0f}〜{hi*100:.0f}% |")
+                     f"{lo*100:.0f}〜{hi*100:.0f}% | {int(b['ret'].sum()-b['stake'].sum()):+,}円 | {best}R |")
     L += ["",
           "## 読み方\n",
           "- 回収率は配分では動かない（選定が同じなので）。動くのは**的中でも赤字の割合**と的中率。",
