@@ -241,14 +241,25 @@ def today_status():
         return list(r.values()) if isinstance(r, dict) else list(r)
 
     up = {}
+    up_day = None
     try:
         doc = httpx.get(OPENAPI_API_TODAY, timeout=60).json()
-        day = list(doc["programs"].values())[0]
+        progs = doc["programs"]
+        # 上流は朝のうち前日の番組表を返し続けることがある。**日付を確かめずに突き合わせると、
+        # 前日の「結果あり168」と当日の「DB 0件」を並べて故障のように見えてしまう。**
+        key = str(now.date())
+        up_day = key if key in progs else (list(progs.keys())[0] if progs else None)
+        day = progs.get(up_day) or {}
         for code, st in day.items():
             rs = _races(st)
             up[int(code)] = (sum(1 for x in rs if x.get("result")), len(rs))
         tot = sum(v[1] for v in up.values())
-        typer.echo(f"上流 today.json: {len(up)}場 {tot}レース / 結果あり {sum(v[0] for v in up.values())}")
+        if up_day is None:
+            typer.echo("上流 today.json: 番組表が空です")
+        else:
+            mark = "" if up_day == key else "  ← 今日ではありません（上流はまだ前日の番組表を出しています）"
+            typer.echo(f"上流 today.json[{up_day}]: {len(up)}場 {tot}レース / "
+                       f"結果あり {sum(v[0] for v in up.values())}{mark}")
     except Exception as e:
         typer.echo(f"上流の取得に失敗: {e!r}")
 
@@ -260,10 +271,18 @@ def today_status():
         FROM races r LEFT JOIN results res ON res.race_id = r.id
         WHERE r.race_date = :d GROUP BY r.stadium_code ORDER BY r.stadium_code"""),
         get_engine(), params={"d": str(now.date())})
-    typer.echo(f"DB: {len(df)}場 {int(df['n'].sum())}レース / 結果あり {int(df['done'].sum())}")
+    typer.echo(f"DB[{now.date()}]: {len(df)}場 {int(df['n'].sum())}レース / 結果あり {int(df['done'].sum())}")
+    if len(df) == 0:
+        typer.echo("  本日の出走表がまだDBにありません。"
+                   + ("取り込みは08:00から5分ごとです（それより前なら正常）。" if f"{now:%H:%M}" < "08:00"
+                      else "08:00を過ぎているので scheduler のジョブ状態を確認してください。"))
+        if up_day and up_day != str(now.date()):
+            typer.echo(f"  上流も {up_day} の番組表のままなので、上流待ちです（異常ではありません）。")
+        return
     typer.echo("場      DB結果  上流結果  DBで結果のある最後の締切")
+    same_day = (up_day == str(now.date()))
     for _, x in df.iterrows():
-        u = up.get(int(x["c"]))
+        u = up.get(int(x["c"])) if same_day else None
         typer.echo(f"{STADIUMS.get(int(x['c']), x['c']):<6} {int(x['done'])}/{int(x['n'])}"
                    f"     {(str(u[0]) + '/' + str(u[1])) if u else '-':<7}"
                    f"  {str(x['last_done'])[-8:-3] if x['last_done'] else '-'}")
