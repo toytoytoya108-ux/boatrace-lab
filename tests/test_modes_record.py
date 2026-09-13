@@ -51,10 +51,20 @@ def test_record_and_score_modes(db):
     o = _fake_o(odds)
     with db.session_scope() as s:
         r = s.get(mm.Race, 202609120101)
-        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
+        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {k: set() for k in dl.MODE_ROLES})
     with db.session_scope() as s:
         rows = {p.role: p for p in s.query(mm.Prediction).all()}
-        assert set(rows) == {"ana", "katai", "katai_t", "place"}
+        assert set(rows) == set(dl.MODE_ROLES)
+        # 本命10点: 成立していれば10点、どの点が当たっても払戻 ≥ 投資×1.5
+        hm = rows["honmei"]
+        hsel = s.query(mm.PredictionSelection).filter_by(prediction_id=hm.id).all()
+        if hm.skip_reason in ("no_guarantee", "too_few_points", "odds_missing"):
+            assert hsel == []
+        else:
+            total = sum(x.stake for x in hsel)
+            assert len(hsel) == 10 and total <= ModeParams().honmei_cap
+            assert hm.flags["min_payout"] >= total * ModeParams().honmei_multiple - 1e-6
+            assert all(x.stake * x.odds_at_pred >= hm.flags["min_payout"] - 1e-6 for x in hsel)
         kt = s.query(mm.PredictionSelection).filter_by(prediction_id=rows["katai_t"].id).order_by(mm.PredictionSelection.rank).all()
         assert rows["katai_t"].decision == "buy" and [x.stake for x in kt] == [1000, 500, 300, 300, 200, 200, 200, 100, 100, 100]
         assert rows["ana"].decision == "buy" and rows["ana"].flags["n_points"] == 21
@@ -74,7 +84,7 @@ def test_record_and_score_modes(db):
     o2 = {**_fake_o(odds, estimated=True), "race_id": 202609120102}
     with db.session_scope() as s:
         r = s.get(mm.Race, 202609120102)
-        dl._record_modes(s, o2, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
+        dl._record_modes(s, o2, r, "t", 1, now, {}, ModeParams(), {k: set() for k in dl.MODE_ROLES})
     with db.session_scope() as s:
         p = s.query(mm.Prediction).filter_by(race_id=202609120102, role="ana").one()
         assert p.decision == "skip" and p.skip_reason == "odds_estimated"
@@ -124,19 +134,26 @@ def test_record_late_modes(db):
                             post_time_at_pred=r.closed_at, features_used=None, completeness=1.0, boat_eval={}, probs=o["probs"],
                             odds_used=o["odds_used"], ev={}, confidence=0.8, expected_return=0.0, decision="buy", rationale={"summary": "x"},
                             rationale_text="x", input_hash="h"))
-        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {"ana": set(), "katai": set(), "katai_t": set(), "place": set()})
+        dl._record_modes(s, o, r, "t", 1, now, {}, ModeParams(), {k: set() for k in dl.MODE_ROLES})
     # 直前のオッズ: 人気順を少し入れ替える（上位20通りの一部を入れ替え）
     late = {PERM_LABELS[i]: float(odds[i]) for i in range(120)}
     order = np.argsort(1.0 / odds)[::-1]  # 確率の高い順（オッズ低い順）
     a, b = PERM_LABELS[int(order[19])], PERM_LABELS[int(order[45])]
     late[a], late[b] = late[b], late[a]
-    assert dl.record_late_modes(rid, late, now + timedelta(minutes=6), 3.5) == 2
+    assert dl.record_late_modes(rid, late, now + timedelta(minutes=6), 3.5) == 3
     with db.session_scope() as s:
         p = s.query(mm.Prediction).filter_by(race_id=rid, role="ana_late").one()
         assert p.flags["late"] and p.flags["mode"] == "ana" and p.flags["minutes_before"] == 3.5
         assert p.flags["overlap_with_early"] == 20 and p.flags["early_decision"] == "buy"
         assert s.query(mm.PredictionSelection).filter_by(prediction_id=p.id).count() == 21
         assert s.query(mm.Prediction).filter_by(race_id=rid, role="place_late").count() == 1
+        # 本命10点の直前版: 買う/買わないは8分前の判断を引き継ぎ、倍率だけ取り直したオッズで測る
+        hl = s.query(mm.Prediction).filter_by(race_id=rid, role="hon_late").one()
+        assert hl.flags["late"] and hl.flags["mode"] == "honmei"
+        hsel = s.query(mm.PredictionSelection).filter_by(prediction_id=hl.id).all()
+        if hl.decision == "buy":
+            total = sum(x.stake for x in hsel)
+            assert len(hsel) == 10 and hl.flags["min_payout"] >= total * ModeParams().honmei_multiple - 1e-6
     # 2回目は書かない（同一レースに1回）
     assert dl.record_late_modes(rid, late, now + timedelta(minutes=7), 2.5) == 0
     # 採点は既存経路に乗る

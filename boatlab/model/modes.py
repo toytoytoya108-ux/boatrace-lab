@@ -2,6 +2,8 @@
 
   ana     : 3連単（穴狙い）   市場が示す万舟確率が高いレースで、人気20〜40番目の21点を100円ずつ
   katai   : 3連単（堅い予想） 本線（モデル確率順）を「当たれば必ず投資額以上」が成り立つ点数まで削って買う
+  katai_t : 3連単（堅い・上位厚め） 本線10点固定・合計3,000円・順位に反比例した配分
+  honmei  : 3連単（本命10点・1.5倍保証） 本線10点を「当たれば必ず投資の1.5倍以上」で買い、1日5枠を動的しきい値で配る
   fukusho : 複勝・単勝        市場の確信度がしきい値以上のレースで1点
 
 設計上の約束:
@@ -11,7 +13,7 @@
   - しきい値は確定オッズで決めた値。締切前オッズでは市場の確信度が中央値で約6pt低く出るので、
     記録が貯まったら再較正する（設定は自動で変えない。versioned settings で人が変える）。
 
-modes_version = "modes1"
+modes_version = "modes2"（honmei を追加）
 """
 from __future__ import annotations
 
@@ -21,11 +23,16 @@ import numpy as np
 
 from boatlab.model.trifecta import PERMS
 
-MODES_VERSION = "modes1"
+MODES_VERSION = "modes2"
 UNIT = 100
 Q_MAN = 0.0075                                  # オッズ100倍 ⟺ 万舟
 _A = np.array([p[0] for p in PERMS])
 _B = np.array([p[1] for p in PERMS])
+
+# 本命10点モード用: 「本線10点の確率合計」の分位点（0%,1%,…,100%）。
+# 2026年1〜5月（探索期間）で ×1.5・上限1万円の保証が成立した 9,952R の分布から作った（`online5.md` §5）。
+# **この表は自動では更新しない。** 3か月ごとに人が取り直して settings の extra.modes に入れる。
+HONMEI_CONF_GRID = tuple([0.1119, 0.1995, 0.2181, 0.2299, 0.2407, 0.2505, 0.2583, 0.2658, 0.2719, 0.2780, 0.2843, 0.2895, 0.2948, 0.3001, 0.3044, 0.3090, 0.3135, 0.3177, 0.3212, 0.3255, 0.3292, 0.3323, 0.3362, 0.3393, 0.3424, 0.3452, 0.3480, 0.3508, 0.3541, 0.3572, 0.3605, 0.3634, 0.3656, 0.3683, 0.3705, 0.3734, 0.3758, 0.3787, 0.3812, 0.3840, 0.3870, 0.3897, 0.3924, 0.3953, 0.3981, 0.4005, 0.4037, 0.4062, 0.4095, 0.4118, 0.4143, 0.4171, 0.4196, 0.4221, 0.4247, 0.4276, 0.4303, 0.4326, 0.4349, 0.4371, 0.4393, 0.4421, 0.4448, 0.4474, 0.4498, 0.4522, 0.4544, 0.4571, 0.4597, 0.4621, 0.4642, 0.4668, 0.4694, 0.4723, 0.4748, 0.4780, 0.4810, 0.4842, 0.4874, 0.4904, 0.4938, 0.4970, 0.5007, 0.5040, 0.5074, 0.5107, 0.5141, 0.5179, 0.5218, 0.5263, 0.5312, 0.5364, 0.5428, 0.5496, 0.5569, 0.5653, 0.5738, 0.5846, 0.5994, 0.6229, 0.7583])
 
 # 実測（確定オッズ・2026年確認期間）。画面の併記用。数字の出典は各 md。
 MEASURED = {
@@ -35,6 +42,9 @@ MEASURED = {
                   per_day=4.5, stake_per_race=2841, loss_on_hit=0.010, source="no_hit_loss.md"),
     "katai_t": dict(roi=0.836, roi_lo=0.80, roi_hi=0.87, hit=0.700, avg_payout=3150, max_lose=6,
                     per_day=4.5, stake_per_race=3000, loss_on_hit=0.469, source="no_hit_loss.md（P. 10点・確率比例）"),
+    "honmei": dict(roi=0.793, roi_lo=0.72, roi_hi=0.88, hit=0.470, avg_payout=6700, max_lose=9,
+                   per_day=5.0, stake_per_race=4685, loss_on_hit=0.008,
+                   source="online5.md R3（確認期間6〜8月・先読みなし）"),
     "fukusho": dict(roi=0.993, roi_lo=0.98, roi_hi=1.01, hit=0.946, avg_payout=105, max_lose=2,
                     per_day=10.6, stake_per_race=100, source="condition_rules.md §3"),
     "tansho": dict(roi=0.948, roi_lo=0.93, roi_hi=0.96, hit=0.850, avg_payout=112, max_lose=None,
@@ -57,6 +67,14 @@ class ModeParams:
     katai_t_enabled: bool = True        # 堅い予想（上位厚め）: 本線10点固定・合計固定・順位に反比例した配分
     katai_t_points: int = 10
     katai_t_total: int = 3000
+    # --- 本命10点・×1.5保証・1日5枠（`min15.md` / `pick5.md` / `online5.md`）
+    honmei_enabled: bool = True
+    honmei_points: int = 10             # 本線の上位何点を買うか（固定）
+    honmei_multiple: float = 1.5        # 当たったら必ず投資の何倍以上が返るか
+    honmei_cap: int = 10000             # 1レースの支出上限。これを超えるなら見送り
+    honmei_slots: int = 5               # 1日に買う本数（枠）
+    honmei_feasible_rate: float = 0.44  # 残りレースのうち保証が成立する見込みの割合（残り本数の見積もりに使う）
+    honmei_conf_grid: tuple = HONMEI_CONF_GRID   # 本線10点の確率合計の分位点（探索期間・成立レースのみ）
     fukusho_enabled: bool = True
     fukusho_q_min: float = 0.90         # 市場の2着以内確率
     tansho_enabled: bool = True
@@ -140,6 +158,76 @@ def select_katai(main_idx: list[int], odds3t: np.ndarray, confidence: float, prm
     return dict(fired=bool(fired), reason=(None if fired else "confidence_low"), points=main[:k],
                 stakes=[int(x) for x in st], odds=[float(o) for o in odds[:k]],
                 min_payout=int(min(st[i] * odds[i] for i in range(k))), stake_total=int(st.sum()))
+
+
+# ---------------------------------------------------------------- 本命10点・×1.5保証・1日5枠
+def min_guarantee_F(odds: np.ndarray, mult: float, cap: int) -> int | None:
+    """全点で 払戻 ≥ mult × Σ賭け金 を満たす最小の保証払戻 F（100円刻み）。
+
+    賭け金_i = ceil(F ÷ オッズ_i ÷100)×100 としたとき Σ賭け金 × mult ≤ F が条件。
+    Σ賭け金 ≈ F×Σ(1/オッズ) なので **Σ(1/オッズ) ≤ 1/mult** が成立の必要条件（`min15.md` §0）。
+    支出が cap を超えるなら None（＝見送り）。"""
+    odds = np.asarray(odds, float)
+    if not (np.isfinite(odds).all() and (odds > 0).all()):
+        return None
+    inv = float(np.sum(1.0 / odds))
+    if inv >= 1.0 / mult:
+        return None
+    hi = int(np.ceil(1000.0 / (1.0 / mult - inv) / UNIT) * UNIT)      # 必ず成立する上界
+    lo = UNIT
+    while lo < hi:                                                    # 段差があるので都度検証しながら二分
+        mid = int((lo + hi) // 2 // UNIT * UNIT)
+        if mid < UNIT:
+            break
+        if (np.ceil(mid / odds / UNIT) * UNIT).sum() * mult <= mid:
+            hi = mid
+        else:
+            lo = mid + UNIT
+    if (np.ceil(hi / odds / UNIT) * UNIT).sum() > cap:
+        return None
+    return int(hi)
+
+
+def honmei_threshold(slots_left: int, races_left: int, prm: "ModeParams") -> float:
+    """残り枠 ÷ この先に残る成立見込みレース数 の分位点を、確率合計のしきい値にする（秘書問題と同じ形）。
+
+    早い時間ほど厳しく、終盤で枠が余っていれば緩める。**先読みは使わない**（`online5.md` R3）。"""
+    g = list(prm.honmei_conf_grid)
+    if slots_left <= 0:
+        return float("inf")
+    frac = min(1.0, slots_left / max(races_left, 1))
+    k = int(round((1.0 - frac) * (len(g) - 1)))
+    return float(g[max(0, min(len(g) - 1, k))])
+
+
+def select_honmei(main_idx: list[int], odds3t: np.ndarray, probs: dict | None,
+                  slots_left: int, races_left: int, prm: "ModeParams") -> dict:
+    """本線の上位 honmei_points 点を ×honmei_multiple 保証で買う。1日 honmei_slots 枠を動的しきい値で配る。
+
+    probs は combo ラベル → モデル確率。しきい値に使うのは**選んだ10点の確率合計**（本体の信頼度とは別物）。
+    見送りでも「買うならこれ」を返す（旧モードと同じく仮想採点するため）。"""
+    if not prm.honmei_enabled:
+        return dict(fired=False, reason="disabled", points=[], stakes=[])
+    main = [int(i) for i in main_idx][: prm.honmei_points]
+    if len(main) < prm.honmei_points:
+        return dict(fired=False, reason="too_few_points", points=[], stakes=[])
+    odds = np.array([odds3t[i] for i in main], float)
+    if not (np.isfinite(odds).all() and (odds > 0).all()):
+        return dict(fired=False, reason="odds_missing", points=[], stakes=[])
+    F = min_guarantee_F(odds, prm.honmei_multiple, prm.honmei_cap)
+    if F is None:
+        return dict(fired=False, reason="no_guarantee", points=[], stakes=[],
+                    inv_sum=float(np.sum(1.0 / odds)))
+    st = (np.ceil(F / odds / UNIT) * UNIT).astype(int)
+    from boatlab.model.trifecta import PERM_LABELS
+    p10 = float(sum(float((probs or {}).get(PERM_LABELS[j], 0.0) or 0.0) for j in main))
+    thr = honmei_threshold(slots_left, races_left, prm)
+    fired = slots_left > 0 and p10 >= thr
+    reason = None if fired else ("slots_full" if slots_left <= 0 else "confidence_low")
+    return dict(fired=bool(fired), reason=reason, points=main, stakes=[int(x) for x in st],
+                odds=[float(o) for o in odds], stake_total=int(st.sum()), min_payout=int(F),
+                mult=float(F / max(int(st.sum()), 1)), p10=p10, threshold=(None if thr == float("inf") else thr),
+                slots_left=int(slots_left), races_left=int(races_left))
 
 
 def top_heavy_stakes(n: int, total: int) -> list[int]:

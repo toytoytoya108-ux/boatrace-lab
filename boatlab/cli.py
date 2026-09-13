@@ -488,14 +488,14 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
                    f"  単勝: {'発火 ' + str(pl['tansho']['lane']) + '号艇' if pl['tansho']['fired'] else '見送り'}")
         typer.echo("  堅い予想はモデルの本線が要るので、記録（下の一覧）で確認してください")
         raise typer.Exit()
-    typer.echo(f"{d} の3モード記録（確定予想・仮想）")
+    typer.echo(f"{d} の各モード記録（確定予想・仮想）")
     with eng.connect() as c:
         rows = c.execute(_text("""
             SELECT p.role, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.rationale_text,
                    (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id=p.id) stake,
                    sc.valid, sc.hit, sc.pnl
             FROM predictions p JOIN races r ON r.id=p.race_id LEFT JOIN scoring sc ON sc.prediction_id=p.id
-            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ana','katai','katai_t','place')
+            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ana','katai','katai_t','honmei','place')
             ORDER BY p.role, r.closed_at""" ), {"d": str(d)}).mappings().all()
     if not rows:
         typer.echo("  記録なし（確定予想は各レースの締切4〜10分前に保存されます）")
@@ -503,7 +503,8 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
     est = sum(1 for x in rows if x["role"] == "ana" and x["skip_reason"] == "odds_estimated")
     n_ana = sum(1 for x in rows if x["role"] == "ana")
     typer.echo(f"  実オッズで作られたレース {n_ana - est} / 推定オッズ（市場ベースの2モードは見送り） {est}")
-    for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("katai_t", "3連単（堅い・上位厚め）"), ("place", "複勝・単勝")):
+    for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("katai_t", "3連単（堅い・上位厚め）"),
+                     ("honmei", "3連単（本命10点・1.5倍保証）"), ("place", "複勝・単勝")):
         rs = [x for x in rows if x["role"] == role]
         fired = [x for x in rs if x["decision"] == "buy"]
         scored = [x for x in fired if x["valid"]]
@@ -710,6 +711,23 @@ def late_drift(days: int = typer.Option(14, "--days", help="直近何日分を�
         by.setdefault(x["race_id"], {})[x["role"]] = dict(x)
     pairs = [(rid, v["ana"], v["ana_late"]) for rid, v in by.items() if "ana" in v and "ana_late" in v]
     typer.echo(f"直近{days}日: 8分前版と直前版の両方があるレース {len(pairs)}")
+    # 本命10点: 締切直前でも ×1.5 が保たれているか（`min15.md` の但し書きの実測）
+    with eng.connect() as c:
+        hl = c.execute(_text("""SELECT p.flags FROM predictions p JOIN races r ON r.id=p.race_id
+            WHERE r.race_date >= :d AND p.stage='final' AND p.role='hon_late' AND p.decision='buy'"""),
+            {"d": since}).fetchall()
+    ms = []
+    for (fl,) in hl:
+        fl = _json.loads(fl) if isinstance(fl, str) else (fl or {})
+        if fl.get("mult") and fl.get("early_mult"):
+            ms.append((float(fl["early_mult"]), float(fl["mult"])))
+    if ms:
+        em = np.array([a for a, _ in ms]); lm = np.array([b for _, b in ms])
+        typer.echo(f"\n[本命10点] 8分前と直前の倍率を比べられたレース {len(ms)}")
+        typer.echo(f"  8分前の倍率 中央値 {np.median(em):.3f} → 直前 {np.median(lm):.3f}"
+                   f"（差の中央値 {np.median(lm - em):+.3f}）")
+        typer.echo(f"  直前に倍率が1.5を割った割合 {(lm < 1.5).mean()*100:.1f}%"
+                   f" → 割るなら設定の倍率を上げる（例 1.6〜1.7）")
     if not pairs:
         raise typer.Exit()
     ov_el, ov_ef, ov_lf, fired_agree = [], [], [], 0
