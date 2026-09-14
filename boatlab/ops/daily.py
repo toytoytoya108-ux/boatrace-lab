@@ -8,9 +8,9 @@ train          : 前日までのデータで Predictor を学習して保存・�
 """
 from __future__ import annotations
 import json
-import re
-
 import logging
+import re
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -25,7 +25,8 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
-from boatlab.model.modes import (MODES_VERSION, ModeParams, market_probs, race_tags, select_ana, select_honmei,
+from boatlab.model.modes import (HONMEI_MULTIPLE, MODES_VERSION, ModeParams, honmei_grid_for, market_probs,
+                                 race_tags, select_ana, select_honmei,
                                  select_katai, select_katai_top, select_place)
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
@@ -155,8 +156,21 @@ def focused_from_settings(row: SettingsVersion) -> FocusedParams:
 
 
 def modes_from_settings(row: SettingsVersion) -> ModeParams:
-    """設定の extra.modes（3モード表示）。無ければ既定値（2026-09-12 の実測で決めた値）。"""
-    return ModeParams.from_dict((row.extra or {}).get("modes"))
+    """設定の extra.modes（各モードの条件）。無ければ既定値。
+
+    **倍率を変えたら、しきい値表と成立率も一緒に差し替える。** 倍率を上げると
+    「Σ(1/オッズ) ≤ 1/倍率」を満たすレースだけが残り、その母集団の確率合計は下にずれる。
+    古い表を使い回すとしきい値が高すぎて枠が埋まらなくなる（静かに壊れる）ので、
+    設定で倍率だけ動かされた場合はここで対応する表に付け替える。
+    表を明示的に保存してある設定（グリッドを自分で入れた場合）はそのまま尊重する。"""
+    d = dict((row.extra or {}).get("modes") or {})
+    prm = ModeParams.from_dict(d)
+    if "honmei_conf_grid" not in d and float(prm.honmei_multiple) != HONMEI_MULTIPLE:
+        grid, rate = honmei_grid_for(float(prm.honmei_multiple))
+        prm = replace(prm, honmei_conf_grid=grid,
+                      honmei_feasible_rate=(rate if "honmei_feasible_rate" not in d
+                                            else prm.honmei_feasible_rate))
+    return prm
 
 
 MODE_ROLES = ("ana", "katai", "katai_t", "honmei", "place")

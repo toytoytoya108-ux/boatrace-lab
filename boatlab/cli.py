@@ -523,7 +523,7 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
     n_ana = sum(1 for x in rows if x["role"] == "ana")
     typer.echo(f"  実オッズで作られたレース {n_ana - est} / 推定オッズ（市場ベースの2モードは見送り） {est}")
     for role, nm in (("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("katai_t", "3連単（堅い・上位厚め）"),
-                     ("honmei", "3連単（本命10点・1.5倍保証）"), ("place", "複勝・単勝")):
+                     ("honmei", f"3連単（本命10点・{prm.honmei_multiple:g}倍保証）"), ("place", "複勝・単勝")):
         rs = [x for x in rows if x["role"] == role]
         fired = [x for x in rs if x["decision"] == "buy"]
         scored = [x for x in fired if x["valid"]]

@@ -115,3 +115,43 @@ def test_slots_are_counted_from_today_only(db):
         slots, races = dl.honmei_context(s, r, PRM)
     assert slots == PRM.honmei_slots - 1            # 今日の buy 1件だけ（skip と前日は数えない）
     assert races == max(1, round(2 * PRM.honmei_feasible_rate))   # この先2レース × 成立率
+
+
+def test_grid_follows_multiple_when_changed_in_settings():
+    """**倍率だけ変えて表が古いままだと、しきい値が高すぎて枠が埋まらなくなる（静かに壊れる）。**
+
+    設定で倍率を動かしたら、しきい値表と成立率が対応するものに付け替わることを固定する。
+    """
+    from boatlab.model.modes import HONMEI_GRIDS, honmei_grid_for
+    from boatlab.ops.daily import modes_from_settings
+
+    class _Row:
+        def __init__(self, extra):
+            self.extra = extra
+            self.points = 15
+            self.stake_per_point = 200
+
+    # 倍率を上げると、表の分位も成立率も下がる
+    p150 = modes_from_settings(_Row({"modes": {"honmei_multiple": 1.50}}))
+    p176 = modes_from_settings(_Row({"modes": {"honmei_multiple": 1.76}}))
+    assert list(p150.honmei_conf_grid) == list(HONMEI_GRIDS[1.50][0])
+    assert list(p176.honmei_conf_grid) == list(HONMEI_GRIDS[1.76][0])
+    assert p176.honmei_conf_grid[50] < p150.honmei_conf_grid[50]
+    assert p176.honmei_feasible_rate < p150.honmei_feasible_rate
+
+    # 表を持たない倍率は、最も近い倍率の表を使う（古い表を黙って使い回さない）
+    assert list(modes_from_settings(_Row({"modes": {"honmei_multiple": 1.70}})).honmei_conf_grid) \
+        == list(honmei_grid_for(1.70)[0])
+
+    # 表を明示した設定はそのまま尊重する
+    own = [0.5] * 101
+    assert list(modes_from_settings(
+        _Row({"modes": {"honmei_multiple": 1.76, "honmei_conf_grid": own}})).honmei_conf_grid) == own
+
+
+def test_default_multiple_is_the_measured_one():
+    """既定倍率は winner-drift の実測（当たった目の下落 中央値 −7.4%）で決めた 1.62。"""
+    from boatlab.model.modes import HONMEI_MULTIPLE, ModeParams
+    assert HONMEI_MULTIPLE == 1.62
+    assert ModeParams().honmei_multiple == 1.62
+    assert ModeParams().honmei_feasible_rate == 0.34

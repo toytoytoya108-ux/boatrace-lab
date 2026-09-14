@@ -72,7 +72,7 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 </head>
 <body>
 <div class="app" id="app">
-  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ana">穴狙い<small>3連単</small></button><button data-m="katai">堅い予想<small>保証つき</small></button><button data-m="katai_t">堅い·厚め<small>10点固定</small></button><button data-m="honmei">本命10<small>1.5倍保証</small></button><button data-m="place">複勝·単勝<small>的中率</small></button></div></header>
+  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ana">穴狙い<small>3連単</small></button><button data-m="katai">堅い予想<small>保証つき</small></button><button data-m="katai_t">堅い·厚め<small>10点固定</small></button><button data-m="honmei">本命10<small id="hmLbl">保証つき</small></button><button data-m="place">複勝·単勝<small>的中率</small></button></div></header>
   <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
   <main id="main"></main>
 </div>
@@ -99,21 +99,32 @@ const MAIN_MODES = ["ana", "katai", "katai_t", "honmei", "place"];
 if (!MAIN_MODES.includes(state.mode)) state.mode = "ana";
 function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, rv: state.rv, statsBy: state.statsBy })); } catch (e) {} }
 const MODE_ROLE = { ana: "ana", katai: "katai", katai_t: "katai_t", honmei: "honmei", place: "place" };
-const MODE_NAME = { ana: "3連単（穴狙い）", katai: "3連単（堅い予想・保証つき）", katai_t: "3連単（堅い予想・上位厚め）", honmei: "3連単（本命10点・1.5倍保証）", place: "複勝・単勝", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
+// 本命10点の保証倍率は設定で変わる（2026-09-15: 1.5 → 1.62）。
+// **画面に直書きすると設定と食い違って嘘になる**ので、/api/modes の params から出す。
+let HMULT = 1.62;
+const hm = (t) => String(t).replace(/\{M\}/g, HMULT.toFixed(2).replace(/0$/, "").replace(/\.$/, ""));
+const MODE_NAME_T = { ana: "3連単（穴狙い）", katai: "3連単（堅い予想・保証つき）", katai_t: "3連単（堅い予想・上位厚め）", honmei: "3連単（本命10点・{M}倍保証）", place: "複勝・単勝", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
+const MODE_NAME = new Proxy(MODE_NAME_T, { get: (o, k) => (typeof o[k] === "string" ? hm(o[k]) : o[k]) });
 const MODE_ONE = { ana: "市場が荒れると見ているレースだけ、人気20〜40番目の3連単21点を100円ずつ",
   katai: "本線を「当たれば必ず投資額以上」が成り立つ点数まで削って買う（信頼度0.70以上のレースのみ）",
   katai_t: "本線10点を3,000円固定で、1点目に厚く（1,000/500/300/300/200/200/200/100/100/100円）。当たっても赤字の回がある代わりに回収率は高め",
-  honmei: "本線10点を「当たれば必ず投資の1.5倍以上」になる配分で。1日5枠を、残り枠と残りレース数で決まるしきい値で配る（早い時間ほど厳しい）",
+  honmei: "本線10点を「当たれば必ず投資の{M}倍以上」になる配分で。1日5枠を、残り枠と残りレース数で決まるしきい値で配る（早い時間ほど厳しい）",
   place: "市場がいちばん確信している艇を1点。複勝は2着以内確率0.90以上、単勝は1着確率0.771以上" };
 const REASON = { confidence: "信頼度が基準未満", confidence_low: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得",
   odds_estimated: "実オッズ未取得", odds_missing: "実オッズ未取得", q_man_low: "市場が荒れると見ていない", q_low: "市場の確信度が基準未満",
-  too_few_points: "保証できる点数が足りない", no_guarantee: "1.5倍を保証できない（本命が堅すぎる／上限超え）", slots_full: "今日の枠を使い切った", disabled: "設定で停止中" };
+  too_few_points: "保証できる点数が足りない", no_guarantee: "{M}倍を保証できない（本命が堅すぎる／上限超え）", slots_full: "今日の枠を使い切った", disabled: "設定で停止中" };
 const TAGS = { l1_b: "1号艇B級", kado: "4カド条件", l1_ext4: "1号艇 展示T4位以下", rough_stadium: "荒れる場", maezuke: "前づけあり", top1_12: "1番人気12倍以上",
   women_rookie: "女子・ルーキー戦（堅い）", kikaku: "企画レース（堅い）" };
 const PRE = new Set(["l1_b", "kado", "l1_ext4"]);
 const mq = () => "mode=" + state.mode;
 let MODES_CACHE = { key: null, v: null };
-async function modesData(day) { const k = day || ""; if (MODES_CACHE.key !== k) MODES_CACHE = { key: k, v: await api("/api/modes" + (day ? "?d=" + day : "")) }; return MODES_CACHE.v; }
+async function modesData(day) {
+  const k = day || "";
+  if (MODES_CACHE.key !== k) MODES_CACHE = { key: k, v: await api("/api/modes" + (day ? "?d=" + day : "")) };
+  const m = MODES_CACHE.v && MODES_CACHE.v.params && MODES_CACHE.v.params.honmei_multiple;
+  if (m) { HMULT = Number(m); const e = document.getElementById("hmLbl"); if (e) e.textContent = hm("{M}倍保証"); }
+  return MODES_CACHE.v;
+}
 async function api(path, opt) {
   const r = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opt || {}));
   $("#offline").style.display = r.headers.get("X-From-Cache") ? "block" : "none";
@@ -151,7 +162,7 @@ function renderLogin() {
 }
 // ============================================================ 共通部品
 function modeBar() {
-  return `<div class="modeBar"><div class="t"><b>${MODE_NAME[state.mode]}</b><small>${MODE_ONE[state.mode]}</small></div></div>`;
+  return `<div class="modeBar"><div class="t"><b>${MODE_NAME[state.mode]}</b><small>${hm(MODE_ONE[state.mode])}</small></div></div>`;
 }
 function freshLine(u) {
   if (!u) return "";
@@ -169,7 +180,7 @@ function planOf(r) {
   // 買い目の要約（一覧用）
   const f = r.flags || {};
   if (!r.prediction_id) return "";
-  if (r.decision !== "buy") return `<span class="muted">見送り · ${REASON[r.skip_reason] || r.skip_reason || ""}</span>`;
+  if (r.decision !== "buy") return `<span class="muted">見送り · ${hm(REASON[r.skip_reason] || r.skip_reason || "")}</span>`;
   if (state.mode === "ana") return `${r.n_points}点 ${fmtN(r.stake_plan)}円`;
   if (state.mode === "katai") return `${r.n_points}点 ${fmtN(r.stake_plan)}円${f.min_payout ? ` <small class="muted">当たれば${fmtN(f.min_payout)}円以上</small>` : ""}`;
   if (state.mode === "katai_t") return `${r.n_points}点 ${fmtN(r.stake_plan)}円 <small class="muted">1点目に厚く</small>`;
@@ -326,7 +337,7 @@ async function renderRace(m) {
   }
   const f = p.flags || {}, est = f.odds_estimated, isPlace = p.role === "place";
   const total = p.selections.reduce((a, s) => a + s.stake, 0), won = r.trifecta;
-  const head = p.decision === "buy" ? `<b style="font-size:17px;color:var(--mode)">推奨</b> <span class="mono">${p.selections.length}点 ${fmtN(total)}円</span>` : `<b style="font-size:17px">見送り</b> <span class="muted">${REASON[p.skip_reason] || p.skip_reason || ""}</span>`;
+  const head = p.decision === "buy" ? `<b style="font-size:17px;color:var(--mode)">推奨</b> <span class="mono">${p.selections.length}点 ${fmtN(total)}円</span>` : `<b style="font-size:17px">見送り</b> <span class="muted">${hm(REASON[p.skip_reason] || p.skip_reason || "")}</span>`;
   html += `<div class="card judge ${p.decision === "buy" ? "ok" : ""}"><div>${head}</div>
     <p class="muted" style="margin:4px 0 0">${MODE_NAME[state.mode]} · ${p.created_at.replace("T"," ").slice(5,16)} 確定${est ? " · <span class='pill warn'>実オッズ未取得</span>" : ""}${p.role === "ana" && f.q_man != null ? ` · 市場の万舟確率 ${(f.q_man*100).toFixed(1)}%` : ""}${p.role === "katai" && f.min_payout ? ` · 当たれば${fmtN(f.min_payout)}円以上` : ""}</p></div>`;
   if (p.selections.length && isPlace) {
@@ -336,7 +347,7 @@ async function renderRace(m) {
     html += `<div class="card"><h3 style="margin-top:0">買い目（フォーメーション順）${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${formationView(p.selections, won)}
       <details><summary>一覧で見る</summary><div class="tbl"><table><tr><th>組</th><th class="n">金額</th><th class="n">オッズ</th></tr>${p.selections.map(s => `<tr class="${won === s.combo ? "won" : ""}"><td class="mono">${s.combo}${won === s.combo ? " 🎯" : ""}</td><td class="n">${s.stake}円</td><td class="n">${s.odds_at_pred != null ? (+s.odds_at_pred).toFixed(1) : "–"}</td></tr>`).join("")}</table></div></details></div>`;
   } else {
-    html += `<div class="card muted">この買い方では該当する買い目がありません（${REASON[p.skip_reason] || p.skip_reason || ""}）。</div>`;
+    html += `<div class="card muted">この買い方では該当する買い目がありません（${hm(REASON[p.skip_reason] || p.skip_reason || "")}）。</div>`;
   }
   const rt = f.tags || [], st = f.solid_tags || [];
   if (rt.length || st.length) html += `<div class="card"><h3 style="margin-top:0">このレースの特徴</h3>${tagPills(f)}<p class="muted" style="margin:8px 0 0">${state.mode === "ana" ? "荒れやすい条件の目安です（選定には使っていません。★は前向き検証中）。" : ""}${st.length ? "⚠ 過去データではこの種類のレースは堅く、穴向きではありません。" : ""}</p></div>`;
@@ -395,18 +406,21 @@ async function renderSettings(m) {
       <div class="two">${num("k_max", "本線の最大点数", mp.katai_points_max, 1)}${num("k_min", "成立に必要な最小点数", mp.katai_points_min, 1)}</div>
       <h3>3連単（堅い予想・上位厚め）</h3>
       <div class="two">${num("kt_points", "点数（固定）", mp.katai_t_points, 1)}${num("kt_total", "合計（円・固定）", mp.katai_t_total, 500)}</div>
-      <h3>3連単（本命10点・1.5倍保証）</h3>
+      <h3>3連単（本命10点・${mp.honmei_multiple}倍保証）</h3>
       <div class="two">${num("h_mult", "当たったときの最低倍率", mp.honmei_multiple, 0.1)}${num("h_cap", "1レースの支出上限（円）", mp.honmei_cap, 1000)}</div>
       <div class="two">${num("h_slots", "1日に買う本数（枠）", mp.honmei_slots, 1)}${num("h_pts", "点数（固定）", mp.honmei_points, 1)}</div>
       ${num("h_rate", "残り本数の見積もりに使う成立率", mp.honmei_feasible_rate, 0.01)}
-      <p class="muted">しきい値は「残り枠 ÷ この先に残る成立見込みレース数」の分位点（表は modes.py の HONMEI_CONF_GRID）。早い時間ほど厳しく、終盤で枠が余れば緩みます。表は自動更新しません。</p>
+      <p class="muted">しきい値は「残り枠 ÷ この先に残る成立見込みレース数」の分位点。早い時間ほど厳しく、終盤で枠が余れば緩みます。
+      <b>倍率を変えると、しきい値の表と成立率も対応するものに自動で付け替わります</b>（倍率を上げると成立レースの母集団が変わり、
+      古い表のままだとしきい値が高すぎて枠が埋まらなくなるため）。用意してある表は ×1.50 / ×1.62 / ×1.76 で、
+      それ以外は最も近いものを使います。表そのものは自動更新しません（modes.py の HONMEI_GRIDS）。</p>
       <h3>複勝・単勝</h3>
       <div class="two">${num("p_fk", "複勝: 市場の2着以内確率の下限", mp.fukusho_q_min, 0.01)}${num("p_tn", "単勝: 市場の1着確率の下限", mp.tansho_q_min, 0.01)}</div>
       ${num("p_stake", "1点（円）", mp.place_stake, 100)}
       <p class="muted">しきい値は確定オッズで決めた値です。締切前オッズでは市場の確信度が低めに出るので、記録が貯まったら締切前基準で見直します。</p>
       <p><button class="btn" id="save" style="width:100%">保存（新しい設定版として記録）</button></p></div></details>
     <details class="sec" open><summary>データの書き出し（CSV）</summary><div class="card"><p class="muted" style="margin-top:0">採点済みの記録。分析を依頼するときはこのファイルを渡してください。</p>
-      ${dl("ana", "3連単（穴狙い）")}${dl("katai", "3連単（堅い・保証つき）")}${dl("katai_t", "3連単（堅い・上位厚め）")}${dl("honmei", "3連単（本命10点・1.5倍保証）")}${dl("place", "複勝・単勝")}
+      ${dl("ana", "3連単（穴狙い）")}${dl("katai", "3連単（堅い・保証つき）")}${dl("katai_t", "3連単（堅い・上位厚め）")}${dl("honmei", MODE_NAME.honmei)}${dl("place", "複勝・単勝")}
       <p class="muted" style="margin:10px 0 4px">旧モード（画面からは外しましたが記録は続いています）</p>${dl("focused", "絞り込み型（旧）")}${dl("std", "15点固定（旧）")}</div></details>
     <details class="sec"><summary>このツールについて</summary><div class="card muted">自動購入はしません。設定は自動で変わりません。予想は締切前に保存され、あとから書き換えられません（追記専用）。見送りレースも仮想で採点します。<br>過去の研究（reports/）: 単勝・複勝プールの歪み、買い方の自動研究、絞り込み型などは記録・API を残したまま画面から外しています。</div></details>`;
   $("#save").onclick = async () => {
