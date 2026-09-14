@@ -931,3 +931,30 @@ l1_b・kado・l1_ext4（★事前登録）・rough_stadium・maezuke・top1_12�
 **③だけが未着手で、全努力（0.001 nats）の38倍。** 飛躍1・飛躍2・飛躍15 の3本が独立に
 **「まず3艇の組、次にその並び」の二段構え（Model 1.3）** を指した。ただし 0.0385 は必要量の13%で、
 `model12_wf.md` の通り対数損失の改善が回収率に出なかった実績もある。**市場に追いつく話であって超える話ではない。**
+
+## 更新スクリプトの事故と対策（2026-09-14、`deploy/update.sh`）
+
+7:37 に `sudo bash deploy/update.sh` が途中で止まり、その日の予想が一部欠けた。原因は3つ重なっていた。
+
+- **罠1: SSH が切れるとビルドが死ぬ。** `update.sh` はフォアグラウンド実行なので SIGHUP で落ちる。
+  順序が `git pull` → `build` → `up -d` なので、**pull だけ成功してイメージは古いまま、コンテナは上がらない**
+  という中途半端な状態になる。→ **必ず `setsid nohup` で親から切り離して実行する。**
+- **罠2: 2GB VPS では scheduler(mem_limit 1400m) を止めないと build が OOM する。** sshd ごと詰まるので
+  罠1と同時に起きる（SSHクライアントが落ちたのは結果であって原因ではない）。
+  → build 前に `docker compose stop scheduler`。**失敗しても ERR トラップで上げ直す**（止まったままが最悪）。
+- **罠3: `git pull` が実行中の `update.sh` 自身を書き換える。** bash は実行中のファイルを逐次読むので、
+  行数が変わると次の read がズレた位置に落ちる。→ **pull 直後に `exec bash "$0"` で自分を読み直す**
+  （`BOATLAB_UPDATE_STAGE` で1回だけ）。
+
+**新しい実行手順**:
+```
+cd /opt/boatlab
+sudo setsid nohup bash deploy/update.sh > /tmp/update.log 2>&1 < /dev/null &
+sleep 3; tail -f /tmp/update.log        # Ctrl-C で抜けてもビルドは続く
+```
+
+**欠けた予想は埋めない。** `predict_pending` は締切4分前を切ったレースを対象外にするので、
+停止中に締切を通過したレースは恒久的に未予想のまま残る（追記専用・結果より前にしか保存しない原則どおり）。
+
+**教訓**: 出荷前チェックリストは「アプリのコード」に向いていて、**運用スクリプト自体を検証対象にしていなかった**。
+今回は stub した git/docker で「正常系・build失敗系・自己書き換え系」の3経路を手元で実行してから出した。
