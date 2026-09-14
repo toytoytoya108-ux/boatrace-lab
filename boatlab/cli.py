@@ -863,3 +863,96 @@ def guarantee_check(days: int = typer.Option(7, "--days", help="直近何日分�
     if broke:
         typer.echo("  内訳: " + "、".join(f"{k} {v}R" for k, v in causes.items() if v))
         typer.echo("  A が出たら実装の不具合。B なら倍率を上げる（設定タブ）か、避けられない同着・返還。")
+
+
+@app.command("winner-drift")
+def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を見るか"),
+                 mult: float = typer.Option(1.5, "--mult", help="確定時点で守りたい倍率")):
+    """**当たった目のオッズは、他の目より深く下がるのか。**
+
+    保証つき配分は「予想時のオッズ」で組み、払戻は「確定オッズ」で決まる。
+    払戻を決めるのは**実際に当たった1点**であり、当たる目には締切直前の資金が集まりやすい。
+    もしそうなら ×mult の保証は構造的に楽観で、揺らぎではなく**偏り**として不足する。
+
+    予想に保存した odds_used と、翌朝取り込む確定オッズ（turnmark_final）を突き合わせて、
+    当たった目とそれ以外の下落率を**同じオッズ帯の中で**比べる。
+    """
+    import json as _j
+
+    import numpy as np
+    from sqlalchemy import text as _text
+
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    eng = get_engine()
+    since = str((now_jst() - __import__("datetime").timedelta(days=days)).date())
+    with eng.connect() as c:
+        rows = c.execute(_text("""
+            SELECT p.race_id AS rid, p.odds_used AS ou, p.flags AS fl,
+                   sc.actual_trifecta AS tri,
+                   (SELECT o.odds FROM odds_snapshots o
+                     WHERE o.race_id = p.race_id AND o.bet_type='3t' AND o.source='turnmark_final'
+                     ORDER BY o.captured_at DESC LIMIT 1) AS fin
+            FROM predictions p
+            JOIN races r ON r.id = p.race_id
+            JOIN scoring sc ON sc.prediction_id = p.id
+            WHERE p.stage='final' AND p.role='honmei' AND sc.valid=1
+              AND r.race_date >= :since AND sc.actual_trifecta IS NOT NULL
+            GROUP BY p.race_id"""), {"since": since}).mappings().all()
+
+    BANDS = [(1, 2), (2, 4), (4, 7), (7, 12), (12, 20), (20, 50), (50, 1e9)]
+    win_d = {b: [] for b in BANDS}
+    oth_d = {b: [] for b in BANDS}
+    n_race = n_est = 0
+    for x in rows:
+        if not x["fin"]:
+            continue
+        fl = _j.loads(x["fl"]) if isinstance(x["fl"], str) else (x["fl"] or {})
+        if fl.get("odds_estimated"):
+            n_est += 1
+            continue
+        pre = _j.loads(x["ou"]) if isinstance(x["ou"], str) else (x["ou"] or {})
+        fin = _j.loads(x["fin"]) if isinstance(x["fin"], str) else (x["fin"] or {})
+        if not pre or not fin:
+            continue
+        n_race += 1
+        for cb, a in pre.items():
+            b = fin.get(cb)
+            if a is None or b is None or not (a > 0 and b > 0):
+                continue
+            band = next((t for t in BANDS if t[0] <= a < t[1]), None)
+            if band is None:
+                continue
+            (win_d if cb == x["tri"] else oth_d)[band].append(b / a - 1.0)
+
+    if not n_race:
+        typer.echo(f"直近{days}日に、予想時オッズと確定オッズの両方が揃ったレースがありません。"
+                   "（確定オッズは翌朝06:10の取込で入ります）")
+        return
+    typer.echo(f"直近{days}日 当たった目とそれ以外のオッズの動き（予想時 → 確定）")
+    typer.echo(f"突き合わせできたレース {n_race}（推定オッズのため除外 {n_est}）\n")
+    typer.echo("予想時の帯 | 当たった目 中央値 | 件数 | それ以外 中央値 | 件数 | 差")
+    typer.echo("|---|---:|---:|---:|---:|---:|")
+    aw, ao = [], []
+    for b in BANDS:
+        w, o = win_d[b], oth_d[b]
+        aw += w; ao += o
+        if len(w) < 5:
+            continue
+        mw, mo = float(np.median(w)), float(np.median(o)) if o else float("nan")
+        lab = f"{b[0]}〜{b[1]:g}倍" if b[1] < 1e9 else f"{b[0]}倍〜"
+        typer.echo(f"| {lab} | **{mw*100:+.1f}%** | {len(w)} | {mo*100:+.1f}% | {len(o):,} | "
+                   f"{(mw-mo)*100:+.1f}pt |")
+    if len(aw) < 5:
+        typer.echo("\n当たった目の標本が5件未満。まだ判断できない。")
+        return
+    MW, MO = float(np.median(aw)), float(np.median(ao))
+    typer.echo(f"| **全体** | **{MW*100:+.1f}%** | {len(aw)} | {MO*100:+.1f}% | {len(ao):,} | {(MW-MO)*100:+.1f}pt |")
+    typer.echo(f"\n当たった目の下落の分布: 25%点 {np.percentile(aw,25)*100:+.1f}% / "
+               f"中央 {MW*100:+.1f}% / 75%点 {np.percentile(aw,75)*100:+.1f}%")
+    need = mult / (1.0 + MW) if (1.0 + MW) > 0 else float("nan")
+    need25 = mult / (1.0 + float(np.percentile(aw, 25))) if (1.0 + float(np.percentile(aw, 25))) > 0 else float("nan")
+    typer.echo(f"\n→ 確定時点で ×{mult:.2f} を**中央値で**守るには、予想時に **×{need:.2f}** で組む必要がある。")
+    typer.echo(f"   4回に3回守るなら（25%点まで耐える） **×{need25:.2f}**。")
+    typer.echo("   ※ 倍率を上げるほど成立レースは減る（`min15.md`: ×1.5で44%、×2.0で16%）。"
+               "設定は自動では変えない。")
