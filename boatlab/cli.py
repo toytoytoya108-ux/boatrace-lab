@@ -777,3 +777,89 @@ def late_drift(days: int = typer.Option(14, "--days", help="直近何日分を�
         n, st, pay = roi[k]
         typer.echo(f"  {nm}: 発火・採点済 {n}R  回収率 {pay/st*100 if st else 0:.1f}%")
     typer.echo("  ※ 確定との重なりは翌朝06:10の確定オッズ取込後に埋まります")
+
+
+@app.command("guarantee-check")
+def guarantee_check(days: int = typer.Option(7, "--days", help="直近何日分を見るか"),
+                    role: str = typer.Option("honmei", "--role", help="honmei / katai")):
+    """「当たったのに投資を下回った」を分解する。保証つき配分の検算。
+
+    保証は組み立て時に `賭け金_i × オッズ_i ≥ 倍率 × Σ賭け金` を全点で満たすことで成り立つ。
+    破れる経路は3つしかないので、どれなのかを1レースずつ切り分ける。
+
+      A 組み立て不良 … 保存したオッズで計算し直しても倍率に届かない＝こちらの不具合
+      B 配当の下振れ … 公式配当 < 予想オッズ×100。締切までの下落、または同着・返還
+      C 返還         … 返還点が出て投資が減る（倍率は上がる側なので破れる原因にはならない）
+    """
+    import json as _j
+
+    from sqlalchemy import text as _text
+
+    from boatlab.config import STADIUMS
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    eng = get_engine()
+    since = str((now_jst() - __import__("datetime").timedelta(days=days)).date())
+    with eng.connect() as c:
+        rows = c.execute(_text("""
+            SELECT p.id, r.stadium_code AS st, r.race_no AS rno, r.closed_at AS ca, p.flags,
+                   sc.actual_trifecta AS tri, sc.actual_payout AS pay, sc.hit,
+                   sc.stake_total AS stk, sc.payout_total AS pot,
+                   sc.refunded_points AS rfp, sc.refunded_stake AS rfs
+            FROM predictions p
+            JOIN races r ON r.id = p.race_id
+            JOIN scoring sc ON sc.prediction_id = p.id
+            WHERE p.stage='final' AND p.role=:role AND p.decision='buy'
+              AND sc.valid=1 AND r.race_date >= :since
+            ORDER BY r.closed_at"""), {"role": role, "since": since}).mappings().all()
+    if not rows:
+        typer.echo(f"直近{days}日に role={role} の発火・採点済レースがありません。")
+        return
+    with eng.connect() as c:
+        sels = {}
+        for pid in [x["id"] for x in rows]:
+            sels[pid] = c.execute(_text(
+                "SELECT combo, stake, odds_at_pred FROM prediction_selections "
+                "WHERE prediction_id=:p ORDER BY rank"), {"p": pid}).mappings().all()
+
+    typer.echo(f"直近{days}日 role={role} の保証の検算（発火・採点済 {len(rows)}R）\n")
+    hits = broke = 0
+    causes = {"A 組み立て不良": 0, "B 配当の下振れ": 0}
+    for x in rows:
+        fl = _j.loads(x["flags"]) if isinstance(x["flags"], str) else (x["flags"] or {})
+        mult = float(fl.get("mult") or 0) or None
+        ss = sels.get(x["id"]) or []
+        stk = int(x["stk"] or 0)
+        # 組み立て時点の最小倍率（保存したオッズで再計算する）
+        pairs = [(s["combo"], int(s["stake"]), s["odds_at_pred"]) for s in ss]
+        ok = [(cb, st, float(od)) for cb, st, od in pairs if od is not None and st > 0]
+        built = min((st * od / stk for _, st, od in ok), default=None) if stk else None
+        if not x["hit"]:
+            continue
+        hits += 1
+        ratio = (int(x["pot"] or 0) / stk) if stk else 0.0
+        win = next((t for t in pairs if t[0] == x["tri"]), None)
+        od_pred = float(win[2]) if win and win[2] is not None else None
+        st_win = int(win[1]) if win else 0
+        pay100 = float(x["pay"] or 0) / 100.0
+        nm = f"{STADIUMS.get(int(x['st']), x['st'])} {int(x['rno']):>2}R {str(x['ca'])[11:16]}"
+        if mult and ratio + 1e-9 >= mult:
+            typer.echo(f"  OK   {nm}  投資{stk:,}円 → 払戻{int(x['pot'] or 0):,}円  ×{ratio:.2f}（保証×{mult:.2f}）")
+            continue
+        broke += 1
+        drop = (pay100 / od_pred - 1.0) * 100 if (od_pred and od_pred > 0) else float("nan")
+        cause = "A 組み立て不良" if (built is not None and mult and built + 1e-9 < mult and
+                                 od_pred and abs(pay100 - od_pred) / od_pred < 0.01) else "B 配当の下振れ"
+        causes[cause] += 1
+        typer.echo(f"  NG   {nm}  投資{stk:,}円 → 払戻{int(x['pot'] or 0):,}円  "
+                   f"**×{ratio:.2f}**（保証×{mult:.2f} のはず）")
+        typer.echo(f"       的中 {x['tri']}  賭け金{st_win:,}円  予想オッズ{od_pred if od_pred else '—'}倍 → "
+                   f"公式配当{int(x['pay'] or 0):,}円（＝{pay100:.1f}倍・{drop:+.1f}%）")
+        typer.echo(f"       組み立て時の最小倍率（保存オッズで再計算）: "
+                   f"{('×%.2f' % built) if built is not None else '—'}   返還 {int(x['rfp'] or 0)}点/{int(x['rfs'] or 0):,}円")
+        typer.echo(f"       → 原因: {cause}")
+    typer.echo(f"\n的中 {hits}R / うち保証割れ {broke}R"
+               + (f"（{broke/hits*100:.0f}%）" if hits else ""))
+    if broke:
+        typer.echo("  内訳: " + "、".join(f"{k} {v}R" for k, v in causes.items() if v))
+        typer.echo("  A が出たら実装の不具合。B なら倍率を上げる（設定タブ）か、避けられない同着・返還。")
