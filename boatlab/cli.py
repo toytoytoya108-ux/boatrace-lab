@@ -802,7 +802,8 @@ def guarantee_check(days: int = typer.Option(7, "--days", help="直近何日分�
     since = str((now_jst() - __import__("datetime").timedelta(days=days)).date())
     with eng.connect() as c:
         rows = c.execute(_text("""
-            SELECT p.id, r.stadium_code AS st, r.race_no AS rno, r.closed_at AS ca, p.flags,
+            SELECT p.id, r.stadium_code AS st, r.race_no AS rno, r.closed_at AS ca,
+                   r.race_date AS rd, p.flags,
                    sc.actual_trifecta AS tri, sc.actual_payout AS pay, sc.hit,
                    sc.stake_total AS stk, sc.payout_total AS pot,
                    sc.refunded_points AS rfp, sc.refunded_stake AS rfs
@@ -822,7 +823,14 @@ def guarantee_check(days: int = typer.Option(7, "--days", help="直近何日分�
                 "SELECT combo, stake, odds_at_pred FROM prediction_selections "
                 "WHERE prediction_id=:p ORDER BY rank"), {"p": pid}).mappings().all()
 
-    typer.echo(f"直近{days}日 role={role} の保証の検算（発火・採点済 {len(rows)}R）\n")
+    dmin = min(str(x["rd"]) for x in rows); dmax = max(str(x["rd"]) for x in rows)
+    per_day = {}
+    for x in rows:
+        per_day[str(x["rd"])] = per_day.get(str(x["rd"]), 0) + 1
+    typer.echo(f"role={role} の保証の検算　対象 {since} 以降（--days {days}）")
+    typer.echo(f"発火・採点済 {len(rows)}R　{dmin}〜{dmax}　内訳: "
+               + "、".join(f"{k} {v}R" for k, v in sorted(per_day.items())))
+    typer.echo("※ --days N は「今日からN日前**以降**」なので N=1 でも2日分が入る\n")
     hits = broke = 0
     causes = {"A 組み立て不良": 0, "B 配当の下振れ": 0}
     for x in rows:
@@ -842,7 +850,8 @@ def guarantee_check(days: int = typer.Option(7, "--days", help="直近何日分�
         od_pred = float(win[2]) if win and win[2] is not None else None
         st_win = int(win[1]) if win else 0
         pay100 = float(x["pay"] or 0) / 100.0
-        nm = f"{STADIUMS.get(int(x['st']), x['st'])} {int(x['rno']):>2}R {str(x['ca'])[11:16]}"
+        nm = (f"{str(x['rd'])[5:]} {STADIUMS.get(int(x['st']), x['st'])} "
+              f"{int(x['rno']):>2}R {str(x['ca'])[11:16]}")
         if mult and ratio + 1e-9 >= mult:
             typer.echo(f"  OK   {nm}  投資{stk:,}円 → 払戻{int(x['pot'] or 0):,}円  ×{ratio:.2f}（保証×{mult:.2f}）")
             continue
@@ -929,7 +938,7 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
         typer.echo(f"直近{days}日に、予想時オッズと確定オッズの両方が揃ったレースがありません。"
                    "（確定オッズは翌朝06:10の取込で入ります）")
         return
-    typer.echo(f"直近{days}日 当たった目とそれ以外のオッズの動き（予想時 → 確定）")
+    typer.echo(f"当たった目とそれ以外のオッズの動き（予想時 → 確定）　対象 {since} 以降（--days {days}）")
     typer.echo(f"突き合わせできたレース {n_race}（推定オッズのため除外 {n_est}）\n")
     typer.echo("予想時の帯 | 当たった目 中央値 | 件数 | それ以外 中央値 | 件数 | 差")
     typer.echo("|---|---:|---:|---:|---:|---:|")
