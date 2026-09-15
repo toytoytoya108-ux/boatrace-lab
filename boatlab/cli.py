@@ -912,6 +912,7 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
     BANDS = [(1, 2), (2, 4), (4, 7), (7, 12), (12, 20), (20, 50), (50, 1e9)]
     win_d = {b: [] for b in BANDS}
     oth_d = {b: [] for b in BANDS}
+    win_q = {b: [] for b in BANDS}   # 当たった目の「予想時オッズ」。**aw と同じ帯順で並べる**（zip で揃える）
     n_race = n_est = 0
     for x in rows:
         if not x["fin"]:
@@ -932,7 +933,10 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
             band = next((t for t in BANDS if t[0] <= a < t[1]), None)
             if band is None:
                 continue
-            (win_d if cb == x["tri"] else oth_d)[band].append(b / a - 1.0)
+            if cb == x["tri"]:
+                win_d[band].append(b / a - 1.0); win_q[band].append(float(a))
+            else:
+                oth_d[band].append(b / a - 1.0)
 
     if not n_race:
         typer.echo(f"直近{days}日に、予想時オッズと確定オッズの両方が揃ったレースがありません。"
@@ -942,10 +946,10 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
     typer.echo(f"突き合わせできたレース {n_race}（推定オッズのため除外 {n_est}）\n")
     typer.echo("予想時の帯 | 当たった目 中央値 | 件数 | それ以外 中央値 | 件数 | 差")
     typer.echo("|---|---:|---:|---:|---:|---:|")
-    aw, ao = [], []
+    aw, ao, aq = [], [], []
     for b in BANDS:
         w, o = win_d[b], oth_d[b]
-        aw += w; ao += o
+        aw += w; ao += o; aq += win_q[b]      # aw と aq は同じ順番（帯順）で伸びる
         if len(w) < 5:
             continue
         mw, mo = float(np.median(w)), float(np.median(o)) if o else float("nan")
@@ -959,6 +963,32 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
     typer.echo(f"| **全体** | **{MW*100:+.1f}%** | {len(aw)} | {MO*100:+.1f}% | {len(ao):,} | {(MW-MO)*100:+.1f}pt |")
     typer.echo(f"\n当たった目の下落の分布: 25%点 {np.percentile(aw,25)*100:+.1f}% / "
                f"中央 {MW*100:+.1f}% / 75%点 {np.percentile(aw,75)*100:+.1f}%")
+    # ---- 本命10点の「当たり目」が実際に乗る帯だけで見る
+    # 全帯を混ぜた中央値は 50倍〜（下落が浅く件数が多い）に引っ張られて**甘く出る**。
+    # 保証を壊すのは本線10点の中の当たり目で、その予想時オッズはおおむね 2〜30倍に収まる。
+    # **必要倍率はこの帯で決める。**（2026-09-16: 全帯の中央値で ×1.62 としたのは誤りだった）
+    LO, HI = 2.0, 30.0
+    core = [d for d, q in zip(aw, aq) if LO <= q < HI]
+    typer.echo(f"\n## 本命10点の当たり目が乗る帯（{LO:g}〜{HI:g}倍）だけで見る\n")
+    if len(core) < 10:
+        typer.echo(f"この帯の当たった目が {len(core)} 件しかない。まだ決められない。")
+    else:
+        ca = np.array(core)
+        typer.echo(f"| 分位 | 下落 | ×{mult:.2f} を守るのに必要な組み立て倍率 |")
+        typer.echo("|---|---:|---:|")
+        for q, nm in ((10, "10%点（10回に9回守る）"), (25, "25%点（4回に3回）"),
+                      (50, "中央値（2回に1回）"), (75, "75%点")):
+            v = float(np.percentile(ca, q))
+            need_q = mult / (1.0 + v) if (1.0 + v) > 0 else float("nan")
+            typer.echo(f"| {nm} | {v*100:+.1f}% | **×{need_q:.2f}** |")
+        # 「当たって元本割れ」になるのは下落が 1/mult - 1 を下回ったとき
+        for m2 in (1.50, 1.62, 1.76, 2.00):
+            thr = 1.0 / m2 - 1.0
+            typer.echo(f"  ×{m2:.2f} で組むと、当たって元本割れになるのは下落 {thr*100:.0f}% 未満のとき＝"
+                       f"**この帯の {float((ca < thr).mean())*100:.0f}%**")
+        typer.echo(f"\n（この帯の当たった目 {len(ca)}件。全帯の中央値 {MW*100:+.1f}% より深いのは、"
+                   "50倍〜の当たり目の下落が浅く件数が多いため。**混ぜると甘く出る。**）")
+
     # ---- 予想を締切に近づけたら、この下落はどれだけ縮むか
     # role='honmei'（8分前）と role='hon_late'（3分前）は同じレースの odds_used を別の時刻で持っている。
     # **当たった目**について 早→確定 と 直前→確定 を同じレース集合で比べる（母集団を揃えないと意味がない）。
