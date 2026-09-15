@@ -965,3 +965,91 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
     typer.echo(f"   4回に3回守るなら（25%点まで耐える） **×{need25:.2f}**。")
     typer.echo("   ※ 倍率を上げるほど成立レースは減る（`min15.md`: ×1.5で44%、×2.0で16%）。"
                "設定は自動では変えない。")
+
+
+@app.command("honmei-pace")
+def honmei_pace(days: int = typer.Option(7, "--days", help="直近何日分を見るか")):
+    """**枠が朝のうちに埋まる**のはなぜか。しきい値の配り方を1日ずつ分解する。
+
+    honmei は「残り枠 ÷ この先に残る成立見込み本数」の分位点をしきい値にする（秘書問題）。
+    朝に埋まるなら、原因は次のどれか。記録した flags（p10・threshold・slots_left・races_left）で切り分ける。
+
+      A 成立率の見積もりが低すぎる … races_left を小さく見積もる → しきい値が下がる → 早く埋まる
+      B しきい値表が実運用とずれている … live の確率合計が表より高い側に寄っていると、朝から通ってしまう
+      C 単にその日の上位レースが朝に集中した … 表もしきい値も正しい（この場合は何もしない）
+
+    表は確定オッズのバックテストで作った。実運用は締切前オッズなので**本命のオッズが高めに出て
+    成立しやすく**、成立レースの顔ぶれ自体が変わる。A と B は同じ原因（確定 vs 締切前）から来る。
+    """
+    import json as _j
+
+    import numpy as np
+    from sqlalchemy import text as _text
+
+    from boatlab.config import STADIUMS
+    from boatlab.model.modes import ModeParams
+    from boatlab.store.db import get_engine
+    from boatlab.util import now_jst
+    eng = get_engine()
+    since = str((now_jst() - __import__("datetime").timedelta(days=days)).date())
+    with eng.connect() as c:
+        rows = c.execute(_text("""
+            SELECT r.race_date AS rd, r.stadium_code AS st, r.race_no AS rno, r.closed_at AS ca,
+                   p.decision AS dec, p.skip_reason AS sr, p.flags AS fl
+            FROM predictions p JOIN races r ON r.id = p.race_id
+            WHERE p.stage='final' AND p.role='honmei' AND r.race_date >= :since
+            ORDER BY r.race_date, r.closed_at"""), {"since": since}).mappings().all()
+    if not rows:
+        typer.echo(f"直近{days}日に honmei の記録がありません。")
+        return
+    prm = ModeParams()
+    grid = np.array(prm.honmei_conf_grid)
+    days_d = {}
+    for x in rows:
+        fl = _j.loads(x["fl"]) if isinstance(x["fl"], str) else (x["fl"] or {})
+        days_d.setdefault(str(x["rd"]), []).append((x, fl))
+
+    typer.echo(f"honmei の枠の配り方　対象 {since} 以降（--days {days}）")
+    typer.echo(f"設定: 倍率×{prm.honmei_multiple:g}／枠{prm.honmei_slots}／成立率の見積もり {prm.honmei_feasible_rate:g}\n")
+    all_p10 = []
+    for d, xs in sorted(days_d.items()):
+        real = [(x, f) for x, f in xs if x["sr"] != "odds_estimated"]
+        ng = [1 for x, f in real if x["sr"] == "no_guarantee"]
+        feas = [(x, f) for x, f in real if x["sr"] != "no_guarantee"]
+        fired = [(x, f) for x, f in feas if x["dec"] == "buy"]
+        rate = (len(feas) / len(real)) if real else 0.0
+        all_p10 += [float(f["p10"]) for _, f in feas if f.get("p10") is not None]
+        typer.echo(f"── {d}　実オッズ{len(real)}R／成立{len(feas)}R（実際の成立率 **{rate:.2f}**、"
+                   f"見積もり {prm.honmei_feasible_rate:g}）／発火{len(fired)}R")
+        for x, f in fired:
+            p10 = f.get("p10"); thr = f.get("threshold")
+            typer.echo(f"     {str(x['ca'])[11:16]}  {STADIUMS.get(int(x['st']), x['st'])} {int(x['rno']):>2}R  "
+                       f"確率合計 {p10 if p10 is None else format(float(p10), '.3f')}  "
+                       f"≥ しきい値 {thr if thr is None else format(float(thr), '.3f')}  "
+                       f"（残り枠{f.get('slots_left')}／残り見込み{f.get('races_left')}本）")
+        sf = [x for x, f in feas if x["sr"] == "slots_full"]
+        if sf:
+            typer.echo(f"     → {str(fired[-1][0]['ca'])[11:16]} で枠を使い切り、以降 {len(sf)}R が slots_full"
+                       if fired else f"     → slots_full {len(sf)}R")
+    if not all_p10:
+        typer.echo("\n確率合計（p10）が記録されていません。")
+        return
+    a = np.array(all_p10)
+    typer.echo(f"\n成立レースの「本線10点の確率合計」 実運用 {len(a):,}件 vs しきい値表（確定オッズのバックテスト）")
+    typer.echo("| 分位 | 実運用 | 表 | 差 |")
+    typer.echo("|---|---:|---:|---:|")
+    for q in (10, 25, 50, 75, 90, 95):
+        lv = float(np.percentile(a, q)); gv = float(grid[q])
+        typer.echo(f"| {q}% | {lv:.3f} | {gv:.3f} | **{lv-gv:+.3f}** |")
+    med_gap = float(np.median(a)) - float(grid[50])
+    typer.echo("")
+    if med_gap > 0.01:
+        pct = float((grid < np.median(a)).mean()) * 100
+        typer.echo(f"→ **B: 実運用の確率合計が表より高い側に寄っている**（中央値で {med_gap:+.3f}、"
+                   f"実運用の中央値は表の {pct:.0f}% 分位に相当）。")
+        typer.echo("   朝から多くのレースがしきい値を超えるので枠が早く埋まる。**表を実運用の分布で作り直す**のが筋。")
+    elif med_gap < -0.01:
+        typer.echo(f"→ 実運用の確率合計は表より低い（中央値で {med_gap:+.3f}）。枠が埋まらない側の心配。")
+    else:
+        typer.echo("→ 表と実運用の分布はほぼ一致。枠が早く埋まるなら原因は成立率の見積もり（A）か、"
+                   "その日の並び（C）。上の日別の「実際の成立率」と見積もりを比べること。")
