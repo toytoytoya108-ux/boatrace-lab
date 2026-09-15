@@ -155,3 +155,24 @@ def test_default_multiple_is_the_measured_one():
     assert HONMEI_MULTIPLE == 1.62
     assert ModeParams().honmei_multiple == 1.62
     assert ModeParams().honmei_feasible_rate == 0.34
+
+
+def test_final_prediction_window_is_the_late_one():
+    """確定予想は締切2〜4分前。**直前オッズで作るのが前提**なので、窓がずれたら気づけるように固定する。
+
+    2026-09-16 に 4〜10分前 から移した。根拠は winner-drift の実測
+    （当たった目の下落 8分前 −13.8% → 直前 −4.2%）。救済窓は窓の下限より手前で終わること。
+    """
+    from boatlab.ops import scheduler as sc
+    assert (sc.FINAL_MIN, sc.FINAL_MAX) == (2, 4)
+    assert 0 < sc.FINAL_RESCUE_MIN < sc.FINAL_MIN      # 締切前に作られ、通常窓と重ならない
+
+
+def test_predict_window_accepts_float_minutes():
+    """救済窓は 0.7 分など小数を使う。int 固定だと黙って落ちるので型を確認する。"""
+    import inspect
+
+    from boatlab.ops.daily import predict_pending
+    sig = inspect.signature(predict_pending)
+    for k in ("min_minutes_before_close", "max_minutes_before_close"):
+        assert "float" in str(sig.parameters[k].annotation)

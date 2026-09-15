@@ -184,7 +184,7 @@ def staking_from_settings(row: SettingsVersion) -> StakingParams:
 
 
 def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: date | None = None,
-                    min_minutes_before_close: int = 4, max_minutes_before_close: int | None = None,
+                    min_minutes_before_close: float = 4, max_minutes_before_close: float | None = None,
                     now: datetime | None = None, hist_cache: HistoryFrames | None = None) -> dict:
     """締切まで min_minutes 以上あるレースに予想を保存する（同一 stage/role は1回のみ）。
 

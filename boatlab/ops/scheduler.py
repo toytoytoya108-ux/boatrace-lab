@@ -10,6 +10,7 @@
               締切 4〜10分前のレース: 確定予想（stage=final、1回のみ）
               締切 2〜4分前のレース: 単勝・複勝をもう1回取得 → 候補を記録（stage=late）
   06:10       前日の turnmark（最終オッズ・返還）取込 → 再採点
+  締切2〜4分前 : 3連単オッズを取り直し、そのオッズで確定予想を作る（2026-09-16〜）
   01:15（毎月1日） active モデルをパラメータ据え置きで再学習（docs/04 §13-5）
   02:30       SQLite バックアップ（7世代）
   02:45       買い方の自動研究（固定候補の評価。設定は変えない）
@@ -35,13 +36,20 @@ from boatlab.ingest.history import ingest_turnmark_day, make_fetcher
 from boatlab.ingest.official_web import fetch_odds3t, fetch_oddstf
 from boatlab.model.pipeline import Predictor
 from boatlab.model.selection import SelectionParams
-from boatlab.ops.daily import ingest_today, predict_pending, record_late_modes, record_pool_gap, score_pending, train_and_register
+from boatlab.ops.daily import ingest_today, predict_pending, record_pool_gap, score_pending, train_and_register
 from boatlab.store.db import init_db, session_scope
 from boatlab.store.models import JobRun, ModelVersion, OddsSnapshot, Race
 from boatlab.store.writer import write_bundle
 from boatlab.util import now_jst
 
 log = logging.getLogger(__name__)
+
+# 確定予想を作る時刻（締切まで何分前か）。2026-09-16 に 4〜10分前 から移した。
+# 根拠: `winner-drift` の実測で、当たった目のオッズ下落は 8分前 −13.8% に対し直前 −4.2%。
+# **下落の約7割は8分前→直前で起きる**ので、時刻を寄せるだけで的中率を払わずに保証の精度が上がる。
+# 窓が狭いぶん取りこぼしが怖いので RESCUE で締切直前に拾う（scheduler は30秒ごとに回る）。
+FINAL_MIN, FINAL_MAX = 2, 4
+FINAL_RESCUE_MIN = 0.7
 
 
 class Scheduler:
@@ -187,7 +195,10 @@ class Scheduler:
                 mins = (r.closed_at - now).total_seconds() / 60
                 if 2 <= mins <= 4:
                     self.tf_late_done.add(r.id)
-                    # 3連単を取り直して、穴・複勝単勝の「直前版」を記録する（表示には使わない。2026-09-13〜）
+                    # 3連単を取り直す。**2026-09-16 以降、確定予想はこのオッズで作る**（下の predict_pending）。
+                    # それ以前は8分前のオッズで作り、ここでは「直前版」を別 role で記録していた。
+                    # 移した理由: 当たった目の下落が 8分前 −13.8% → 直前 −4.2%（`winner-drift`）。
+                    # 下落の7割は8分前→直前で起きており、時刻を寄せるだけで的中率を払わずに消える。
                     try:
                         rec3 = fetch_odds3t(self.fetcher, d, r.stadium_code, r.race_no)
                         if rec3 is not None:
@@ -196,8 +207,6 @@ class Scheduler:
                                 write_bundle(s, DayBundle(odds=[rec3]))
                             out.setdefault("odds_late", 0)
                             out["odds_late"] += 1
-                            out.setdefault("late_modes", 0)
-                            out["late_modes"] += record_late_modes(r.id, rec3.odds, now, mins)
                     except FetchLimitExceeded:
                         log.warning("official odds daily limit reached")
                     except Exception as e:
@@ -217,13 +226,18 @@ class Scheduler:
                         log.warning("oddstf(late) fetch failed %s: %r", r.id, e)
         # 暫定予想の取りこぼし救済（morning 時に出走表が未公開だったレース）
         out["program"] = predict_pending(pr, "program", d=d, min_minutes_before_close=15, hist_cache=self._hist(d))
-        # 締切 4〜10分前: 確定予想（済みのレースは predict_pending 側でスキップ）
-        out["final"] = predict_pending(pr, "final", d=d, min_minutes_before_close=4,
-                                       max_minutes_before_close=10, hist_cache=self._hist(d))
+        # 締切 2〜4分前: 確定予想（上でこの窓のオッズを取った直後に走る。済みのレースはスキップ）
+        out["final"] = predict_pending(pr, "final", d=d, min_minutes_before_close=FINAL_MIN,
+                                       max_minutes_before_close=FINAL_MAX, hist_cache=self._hist(d))
+        # 取りこぼし救済: 窓が2分幅なので、混み合って取り逃がしたレースを締切直前に拾う。
+        # **「どのレースにも確定予想がある」を壊さないため。** 記録は created_at と post_time_at_pred の
+        # 差で何分前かが分かるので、後から通常分と区別できる。
+        out["final_rescue"] = predict_pending(pr, "final", d=d, min_minutes_before_close=FINAL_RESCUE_MIN,
+                                              max_minutes_before_close=FINAL_MIN, hist_cache=self._hist(d))
         for sh in self._load_shadows():
             predict_pending(sh, "program", role="shadow", d=d, min_minutes_before_close=15, hist_cache=self._hist(d))
-            r = predict_pending(sh, "final", role="shadow", d=d, min_minutes_before_close=4,
-                                max_minutes_before_close=10, hist_cache=self._hist(d))
+            r = predict_pending(sh, "final", role="shadow", d=d, min_minutes_before_close=FINAL_MIN,
+                                max_minutes_before_close=FINAL_MAX, hist_cache=self._hist(d))
             out.setdefault("shadow_final", 0)
             out["shadow_final"] += r.get("predicted", 0)
         return out

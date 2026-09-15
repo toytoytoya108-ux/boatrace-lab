@@ -889,6 +889,7 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
     import json as _j
 
     import numpy as np
+    import pandas as pd
     from sqlalchemy import text as _text
 
     from boatlab.store.db import get_engine
@@ -989,47 +990,57 @@ def winner_drift(days: int = typer.Option(14, "--days", help="直近何日分を
         typer.echo(f"\n（この帯の当たった目 {len(ca)}件。全帯の中央値 {MW*100:+.1f}% より深いのは、"
                    "50倍〜の当たり目の下落が浅く件数が多いため。**混ぜると甘く出る。**）")
 
-    # ---- 予想を締切に近づけたら、この下落はどれだけ縮むか
-    # role='honmei'（8分前）と role='hon_late'（3分前）は同じレースの odds_used を別の時刻で持っている。
-    # **当たった目**について 早→確定 と 直前→確定 を同じレース集合で比べる（母集団を揃えないと意味がない）。
+    # ---- 8分前 と 直前 のどちらで下落が起きているか（スナップショット同士で比べる）
+    # 公式オッズは 6〜12分前 と 2〜4分前 の2回取っている。**予想がどちらの時刻で作られていても**
+    # この比較は成立するので、2026-09-16 の時刻変更をまたいでも同じ物差しで見られる。
     with eng.connect() as c:
-        lr = c.execute(_text("""
-            SELECT e.race_id AS rid, e.odds_used AS oe, l.odds_used AS ol, sc.actual_trifecta AS tri,
-                   (SELECT o.odds FROM odds_snapshots o
-                     WHERE o.race_id = e.race_id AND o.bet_type='3t' AND o.source='turnmark_final'
-                     ORDER BY o.captured_at DESC LIMIT 1) AS fin
-            FROM predictions e
-            JOIN predictions l ON l.race_id = e.race_id AND l.stage='final' AND l.role='hon_late'
-            JOIN races r ON r.id = e.race_id
-            JOIN scoring sc ON sc.prediction_id = e.id
-            WHERE e.stage='final' AND e.role='honmei' AND sc.valid=1
-              AND r.race_date >= :since AND sc.actual_trifecta IS NOT NULL
-            GROUP BY e.race_id"""), {"since": since}).mappings().all()
+        snaps = c.execute(_text("""
+            SELECT o.race_id AS rid, o.captured_at AS cap, o.source AS src, o.odds AS od,
+                   r.closed_at AS ca, sc.actual_trifecta AS tri
+            FROM odds_snapshots o
+            JOIN races r ON r.id = o.race_id
+            JOIN predictions p ON p.race_id = o.race_id AND p.stage='final' AND p.role='honmei'
+            JOIN scoring sc ON sc.prediction_id = p.id AND sc.valid=1
+            WHERE o.bet_type='3t' AND r.race_date >= :since AND sc.actual_trifecta IS NOT NULL
+            ORDER BY o.race_id, o.captured_at"""), {"since": since}).mappings().all()
+    per = {}
+    for x in snaps:
+        rec = per.setdefault(x["rid"], {"tri": x["tri"], "early": None, "late": None, "fin": None})
+        if x["src"] == "turnmark_final":
+            rec["fin"] = x["od"]; continue
+        try:
+            mins = (pd.Timestamp(x["ca"]) - pd.Timestamp(x["cap"])).total_seconds() / 60.0
+        except Exception:
+            continue
+        if mins >= 5 and rec["early"] is None:
+            rec["early"] = x["od"]
+        elif 0 < mins < 5:
+            rec["late"] = x["od"]        # 最後に取れたものを使う
     de, dl = [], []
-    for x in lr:
-        if not x["fin"]:
+    for rec in per.values():
+        if not (rec["fin"] and rec["early"] and rec["late"] and rec["tri"]):
             continue
         def _g(v):
             return _j.loads(v) if isinstance(v, str) else (v or {})
-        a, b, f = _g(x["oe"]), _g(x["ol"]), _g(x["fin"])
-        t = x["tri"]
+        a, b, f = _g(rec["early"]), _g(rec["late"]), _g(rec["fin"])
+        t = rec["tri"]
         oa, ob, of = a.get(t), b.get(t), f.get(t)
         if not (oa and ob and of and oa > 0 and ob > 0 and of > 0):
             continue
         de.append(of / oa - 1.0); dl.append(of / ob - 1.0)
-    typer.echo("\n## 予想を締切に近づけたら下落は縮むか（当たった目・同じレースで比較）\n")
+    typer.echo("\n## 下落は 8分前→直前 と 直前→確定 のどちらで起きているか（当たった目・同じレース）\n")
     if len(de) < 5:
-        typer.echo(f"比較できたレースが {len(de)} 件しかない。直前版（hon_late）の記録が貯まるまで判断できない。")
+        typer.echo(f"両方のオッズが揃った当たりレースが {len(de)} 件しかない。まだ判断できない。")
     else:
         me, ml = float(np.median(de)), float(np.median(dl))
-        typer.echo(f"| 予想の時刻 | 当たった目の下落 中央値 | ×{mult:.2f} に必要な組み立て倍率 |")
+        typer.echo(f"| 起点 | 確定までの下落 中央値 | ×{mult:.2f} に必要な組み立て倍率 |")
         typer.echo("|---|---:|---:|")
-        typer.echo(f"| いまの8分前 | {me*100:+.1f}% | ×{mult/(1+me):.2f} |")
-        typer.echo(f"| 直前（2〜4分前） | {ml*100:+.1f}% | ×{mult/(1+ml):.2f} |")
+        typer.echo(f"| 8分前のオッズ | {me*100:+.1f}% | ×{mult/(1+me):.2f} |")
+        typer.echo(f"| 直前(2〜4分前)のオッズ | {ml*100:+.1f}% | ×{mult/(1+ml):.2f} |")
         typer.echo(f"\n比較したレース {len(de)}件。"
-                   + (f"**縮む分は {abs(ml-me)*100:.1f}pt**（必要倍率で ×{mult/(1+me):.2f} → ×{mult/(1+ml):.2f}）。"
+                   + (f"**8分前→直前で {abs(ml-me)*100:.1f}pt 分が起きている**（必要倍率 ×{mult/(1+me):.2f} → ×{mult/(1+ml):.2f}）。"
                       if ml > me + 0.005 else
-                      "**直前にしても下落はほとんど縮まない。** 下落の大半は最後の2〜3分に起きている。"))
+                      "**直前にしても下落はほとんど縮まない。** 大半は最後の2〜3分に起きている。"))
 
     need = mult / (1.0 + MW) if (1.0 + MW) > 0 else float("nan")
     need25 = mult / (1.0 + float(np.percentile(aw, 25))) if (1.0 + float(np.percentile(aw, 25))) > 0 else float("nan")
