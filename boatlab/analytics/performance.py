@@ -18,8 +18,15 @@ from boatlab.store.db import get_engine
 
 def load_scored(model_version: str | None = None, role: str = "active", stage: str = "final") -> pd.DataFrame:
     sql = """
-        SELECT sc.*, p.model_version, p.decision, p.confidence, p.expected_return, p.flags, p.created_at,
-               r.race_date, r.stadium_code, r.grade, r.race_no, s.name AS stadium,
+        SELECT sc.*, p.model_version, p.decision, p.skip_reason, p.confidence, p.expected_return,
+               p.flags, p.created_at, p.post_time_at_pred,
+               -- 何分前に作られたか。2026-09-16 に確定予想を 8分前→2〜4分前 に移したので、
+               -- **前後を混ぜずに集計するための鍵**になる（CSVだけで判別できるようにする）。
+               ROUND((julianday(p.post_time_at_pred) - julianday(p.created_at)) * 1440.0, 1) AS minutes_before,
+               json_extract(p.flags, '$.tags') AS tags,
+               json_extract(p.flags, '$.solid_tags') AS solid_tags,
+               json_extract(p.flags, '$.odds_estimated') AS odds_estimated,
+               r.race_date, r.stadium_code, r.grade, r.race_no, r.race_type, s.name AS stadium,
                (SELECT AVG(ps.odds_at_pred) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS avg_odds,
                (SELECT AVG(ps.odds_at_pred) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='hole') AS hole_avg_odds,
                (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id AND ps.kind='main') AS main_stake,
