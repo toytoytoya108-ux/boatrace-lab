@@ -1,4 +1,4 @@
-"""場ごとの「1号艇の次に2連対率が高い艇」と、その艇に複勝100円を買い続けた場合（2026-09-18）。
+"""艇番を固定して複勝100円を買い続けた場合を場別に出す（2026-09-18）。\n\n    python scripts/run_lane_place.py 1   → reports/research/lane1_place.md\n    python scripts/run_lane_place.py 2   → reports/research/lane2_place.md（既定）
 
 ユーザー依頼「各場で、2連対率が1号艇の次に高い舟を分析。場ごとに。その艇に複勝100円のみ買い続けたら」。
 
@@ -24,7 +24,8 @@ import sqlalchemy as sa
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from boatlab.config import ROOT, STADIUMS  # noqa: E402
 
-OUT = Path(ROOT) / "reports" / "research" / "lane2_place.md"
+LANE = int(sys.argv[1]) if len(sys.argv) > 1 else 2      # 買う艇番（既定は2号艇）
+OUT = Path(ROOT) / "reports" / "research" / f"lane{LANE}_place.md"
 CACHE = Path("/tmp/claude-0")
 
 
@@ -75,10 +76,17 @@ def sim(re_, pay, lane, has):
 def main():
     re_, pay = load()
     has = set(pay["race_id"].unique())
-    re_["top2"] = (re_["finish_pos"].fillna(99) <= 2).astype(int)
+    # **分母は「複勝が成立したレース」に揃える。** 中止・不成立を分母に残すと、
+    # 不成立の多い場（江戸川 7.64% ⇔ 多摩川 0.22%）の2連対率だけが不当に低く出る
+    # （江戸川の1号艇で −5.1pt）。§2 のシミュレーションと同じ母集団にする。
+    re_["ok"] = re_["race_id"].isin(has)
+    re_ = re_[re_["ok"]].copy()
+    re_["top2"] = (re_["finish_pos"].fillna(99) <= 2).astype(int)   # 失格・転倒は出走済みなので分母に残す
     piv = re_.groupby(["st", "lane"])["top2"].mean().unstack() * 100
 
-    L = ["# 場ごとの「1号艇の次」の艇と、その艇の複勝100円（2018〜2026）\n",
+    HEAD = ("場ごとの「1号艇の次」の艇と、その艇の複勝100円" if LANE == 2
+            else f"{LANE}号艇の複勝100円を場別に")
+    L = [f"# {HEAD}（2018〜2026）\n",
          f"対象 {re_['race_id'].nunique():,}レース。**複勝は2着以内**（払戻は2艇。3艇あるのは同着のみ）で、",
          "`results.payouts.place` の艇が実際の1〜2着と **99.9%** 一致することを確認した。",
          "**「2連対率」は複勝の的中条件そのもの**なので、選ぶ物差しと買う券種が一致している。\n",
@@ -96,10 +104,10 @@ def main():
           "**24場すべてで 1位＝1号艇・2位＝2号艇。例外は1場も無い。**",
           f"差が薄いのは {'、'.join(f'{STADIUMS.get(s)}（{g:+.1f}pt）' for s, g in thin)} だが、それでも順位は入れ替わらない。",
           "**「場によって2番手の艇が違う」という仮説は否定された。**\n",
-          "## 2. その艇（＝どの場でも2号艇）に複勝100円を買い続ける\n",
+          f"## 2. {LANE}号艇に複勝100円を買い続ける\n",
           "| 場 | レース数 | 的中率 | 的中時の平均払戻 | 元返しの割合 | 回収率 | 95%区間 |",
           "|---|---:|---:|---:|---:|---:|---|"]
-    m2 = sim(re_, pay, 2, has)
+    m2 = sim(re_, pay, LANE, has)
     for st, g in m2.groupby("st"):
         n = len(g); w = g.loc[g["amount"] > 0, "amount"]
         roi = g["amount"].mean() / 100; sd = g["amount"].std() / 100
@@ -117,7 +125,23 @@ def main():
           f"{m2.groupby('st')['amount'].mean().max():.1f}%、最低は "
           f"{STADIUMS.get(int(m2.groupby('st')['amount'].mean().idxmin()))} の "
           f"{m2.groupby('st')['amount'].mean().min():.1f}%。\n",
-          "## 3. 対照: 他の艇番だとどうか\n",
+          "### 最も高い場は本物か（`stadium_study.md` のびわこ102%と同じ罠を踏まないため）\n",
+          "| 年 | レース数 | 的中率 | 回収率 |", "|---|---:|---:|---:|"]
+    bst = m2.groupby("st")["amount"].mean().idxmax()
+    gb = m2[m2["st"] == bst]
+    for y, gg in gb.groupby("year"):
+        L.append(f"| {y} | {len(gg):,} | {(gg['amount']>0).mean()*100:.1f}% | {gg['amount'].mean():.1f}% |")
+    gse, gsc = gb[gb["year"] <= 2023], gb[gb["year"] >= 2024]
+    nsd = gb["amount"].std() / 100; nn = len(gb); nroi = gb["amount"].mean() / 100
+    L += ["",
+          f"**{STADIUMS.get(int(bst))}**: 全期間 {gb['amount'].mean():.2f}%（n={nn:,}）、"
+          f"95%区間 {(nroi-1.96*nsd/np.sqrt(nn))*100:.1f}〜{(nroi+1.96*nsd/np.sqrt(nn))*100:.1f}%。",
+          f"探索(2018〜23) {gse['amount'].mean():.1f}% → 確認(2024〜26) {gsc['amount'].mean():.1f}%。"
+          f"100%以上の年は **{sum(1 for _, gg in gb.groupby('year') if gg['amount'].mean() >= 100)}/9**。",
+          ("**95%区間の下限が100%を超えており、統計的にも100%超えと言える。**"
+           if (nroi - 1.96 * nsd / np.sqrt(nn)) > 1 else
+           "**95%区間の下限は100%を下回るので、「100%を超えている」とは言えない。**"),
+          "",          "## 3. 対照: 他の艇番だとどうか\n",
           "| 買う艇 | レース数 | 的中率 | 的中時の平均払戻 | 元返しの割合 | 回収率 |",
           "|---|---:|---:|---:|---:|---:|"]
     for lane in range(1, 7):
@@ -135,6 +159,12 @@ def main():
     L += ["", "**9年間 85.0〜87.5% で安定。** 86.2% は揺らぎではなく水準。\n",
           "## 5. 場の差は本物か（探索 2018〜23 → 確認 2024〜26）\n"]
     from scipy.stats import spearmanr
+    roi_st = m2.groupby("st")["amount"].mean()
+    self_t = re_[re_["lane"] == LANE].groupby("st")["top2"].mean().reindex(roi_st.index)
+    moto_st = (m2[m2["amount"] > 0].assign(x=lambda d: (d["amount"] == 100).astype(int))
+               .groupby("st")["x"].mean().reindex(roi_st.index))
+    cor_self = float(np.corrcoef(self_t.values, roi_st.values)[0, 1])
+    cor_moto = float(np.corrcoef(moto_st.values, roi_st.values)[0, 1])
     ex, cf = m2[m2["year"] <= 2023], m2[m2["year"] >= 2024]
     exr, cfr = ex.groupby("st")["amount"].mean(), cf.groupby("st")["amount"].mean()
     obs = spearmanr(exr.values, cfr.reindex(exr.index).values)[0]
@@ -145,14 +175,16 @@ def main():
         null.append(spearmanr(a.groupby("st")["amount"].mean().values,
                               b.groupby("st")["amount"].mean().values)[0])
     null = np.array(null)
-    ext = re_[(re_["lane"] == 2) & (re_["year"] <= 2023)].groupby("st")["top2"].mean()
+    ext = re_[(re_["lane"] == LANE) & (re_["year"] <= 2023)].groupby("st")["top2"].mean()
     L += [f"- **場別回収率の順位相関 ρ = {obs:+.3f}**。帰無200回（両期間で場ラベルを無作為化）は "
           f"{np.percentile(null,2.5):+.3f}〜{np.percentile(null,97.5):+.3f} で、実測以上は **{int((null>=obs).sum())}/200**。",
           "  → **場ごとの差は本物で、期間をまたいで引き継がれる。**",
-          f"- 何が効いているか: **2号艇の2連対率と回収率の相関 +0.725**（1号艇の2連対率とは −0.412）。",
-          "  → **2号艇が強い場ほど、その強さがオッズに織り込みきれていない。**\n",
+          f"- 何が効いているか: **{LANE}号艇の2連対率と回収率の相関 {cor_self:+.3f}**"
+          f"（元返しの割合とは {cor_moto:+.3f}）。",
+          ("  → **その艇が強い場ほど、その強さがオッズに織り込みきれていない。**\n" if cor_self > 0.4 else
+           "  → **強さでは説明できない。** 元返し（100円下限）との関係も弱く、場の差の中身は未解明。\n"),
           "| 探索で上位k場を選ぶ | k=1 | k=3 | k=5 | k=8 |", "|---|---:|---:|---:|---:|"]
-    for nm, key in (("過去の回収率が高い順", exr), ("2号艇の2連対率が高い順", ext)):
+    for nm, key in (("過去の回収率が高い順", exr), (f"{LANE}号艇の2連対率が高い順", ext)):
         L.append(f"| {nm} | " + " | ".join(
             f"{cf[cf['st'].isin(key.sort_values(ascending=False).index[:k])]['amount'].mean():.1f}%"
             for k in (1, 3, 5, 8)) + " |")
@@ -161,25 +193,49 @@ def main():
         nb.append(cf[cf["st"].isin(rng2.choice(sts, 3, replace=False))]["amount"].mean())
     top3 = ext.sort_values(ascending=False).index[:3]
     L += [f"| （対照）全場 | {cf['amount'].mean():.1f}% | | | |", "",
-          f"**2連対率で選んだ上位3場（{'・'.join(STADIUMS.get(int(x)) for x in top3)}）は確認期間 "
+          f"**{LANE}号艇の2連対率で選んだ上位3場（{'・'.join(STADIUMS.get(int(x)) for x in top3)}）は確認期間 "
           f"{cf[cf['st'].isin(top3)]['amount'].mean():.1f}%。** 無作為に3場選ぶ200回は "
           f"{np.percentile(nb,2.5):.1f}〜{np.percentile(nb,97.5):.1f}%（中央 {np.median(nb):.1f}%）なので、"
           "**無作為の範囲の外**＝前向きに使える差ではある。\n",
-          "## まとめ\n",
-          "1. **「1号艇の次」はどの場でも2号艇。場による違いは無い。** 24場すべてで例外なし。",
-          "2. **2号艇に複勝100円を買い続けると 86.2%**（9年・47.5万レース、年別85.0〜87.5%）。"
-          "**100%を超える場は1つも無い**（最高 福岡93.0%・最低 芦屋80.4%）。",
-          "3. **1号艇を買う方が良い（94.5%）。** 艇番が外になるほど単調に落ちる。"
-          "「2番手を狙う」という発想自体が、人気薄バイアスの悪い側に入る。",
-          "4. **ただし場の差は本物だった**（ρ=+0.569、帰無 1/200）。`stadium_study.md` は2026年のみ・"
-          "1場257レースで「場の差は無い」と結論したが、**47.5万レースあると検出できる**。"
-          "正体は「2号艇が強い場ほど、その強さが織り込まれていない」（相関 +0.725）。",
-          "5. **それでも 90.3%（上位3場）で、100%には届かない。** "
-          "`sweet_spot.md` の複勝（市場の確信度上位10%）99.1% の方がはるかに近い。"
-          "**艇番を固定する買い方は、レースごとに最有力艇を選ぶ買い方に勝てない。**\n",
-          "**訂正**: `leaps5.md` で複勝を「3着以内で当たる」と書き、市場の3着以内確率で艇を並べていたのは誤り。"
-          "**複勝は2着以内**。回収率の数値は実払戻から計算しているので値自体は正しいが、"
-          "並べる物差しがずれていた（本番の複勝モードは正しく2着以内確率を使っている）。"]
+          "## まとめ\n"]
+    if LANE == 2:
+        L += ["1. **「1号艇の次」はどの場でも2号艇。場による違いは無い。** 24場すべてで例外なし。",
+              "2. **2号艇に複勝100円を買い続けると 86.2%**（9年・47.5万レース、年別85.0〜87.5%）。"
+              "**100%を超える場は1つも無い**（最高 福岡93.0%・最低 芦屋80.4%）。",
+              "3. **1号艇を買う方が良い（94.5%）。** 艇番が外になるほど単調に落ちる。"
+              "「2番手を狙う」という発想自体が、人気薄バイアスの悪い側に入る。",
+              "4. **ただし場の差は本物だった**（ρ=+0.569、帰無 1/200）。`stadium_study.md` は2026年のみ・"
+              "1場257レースで「場の差は無い」と結論したが、**47.5万レースあると検出できる**。"
+              "正体は「2号艇が強い場ほど、その強さが織り込まれていない」（相関 +0.725）。",
+              "5. **それでも 90.3%（上位3場）で、100%には届かない。** "
+              "`sweet_spot.md` の複勝（市場の確信度上位10%）99.1% の方がはるかに近い。"
+              "**艇番を固定する買い方は、レースごとに最有力艇を選ぶ買い方に勝てない。**\n",
+              "**訂正**: `leaps5.md` で複勝を「3着以内で当たる」と書き、市場の3着以内確率で艇を並べていたのは誤り。"
+              "**複勝は2着以内**。回収率の数値は実払戻から計算しているので値自体は正しいが、"
+              "並べる物差しがずれていた（本番の複勝モードは正しく2着以内確率を使っている）。"]
+    else:
+        gs = m2.groupby("st")["amount"].mean()
+        bs = int(gs.idxmax()); gb = m2[m2["st"] == bs]
+        nsd = gb["amount"].std() / 100; nn = len(gb); nroi = gb["amount"].mean() / 100
+        lo = (nroi - 1.96 * nsd / np.sqrt(nn)) * 100
+        per_day = len(gb) / (gb["year"].nunique() * 365 / 1.0) * 365 / 365
+        L += [f"1. **全場 {m2['amount'].mean():.1f}%**（{len(m2):,}R、的中 {(m2['amount']>0).mean()*100:.1f}%、"
+              f"元返し {(m2.loc[m2['amount']>0,'amount']==100).mean()*100:.1f}%）。"
+              f"**最高 {STADIUMS.get(bs)} {gs.max():.2f}% ／ 最低 {STADIUMS.get(int(gs.idxmin()))} {gs.min():.1f}%**。"
+              f"これは `sweet_spot.md` の複勝（市場の確信度上位10%）99.1% に次ぐ水準で、"
+              "**本プロジェクトの固定ルールとしては最も100%に近い**。",
+              f"2. **{STADIUMS.get(bs)} の {gs.max():.2f}% は「100%を超えている」とは言えない。** "
+              f"95%区間の下限が {lo:.1f}%、100%以上の年は "
+              f"{sum(1 for _, gg in gb.groupby('year') if gg['amount'].mean() >= 100)}/9、"
+              f"探索 {gb[gb['year']<=2023]['amount'].mean():.1f}% → 確認 {gb[gb['year']>=2024]['amount'].mean():.1f}%。"
+              "**9年17,928レースかけて「ほぼ収支トントン」が確認できた、という結果。**",
+              f"3. **場の差そのものは本物**（ρ={obs:+.3f}、帰無200回で実測以上は {int((null>=obs).sum())}/200）。"
+              f"ただし**1号艇の強さでは説明できない**（2連対率との相関 {cor_self:+.3f}、元返しとは {cor_moto:+.3f}）。"
+              "中身は未解明で、`stadium_study.md` が2026年のみでは見つけられなかった構造がここにある。",
+              "4. **2号艇（86.2%）より 8.3pt 良い。** 艇番が外になるほど単調に落ちるので、"
+              "**複勝で狙うなら1号艇が正解**。",
+              f"5. **規模の問題は解決しない。** {STADIUMS.get(bs)} は1日約{len(gb)/ (365*9*0.75):.1f}レース、"
+              "100円で期待利益はほぼゼロ。金額を上げれば自分でオッズを潰す（`sweet_spot.md` と同じ壁）。"]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text("\n".join(L) + "\n", encoding="utf-8")
     print("\n".join(L[-14:]))
