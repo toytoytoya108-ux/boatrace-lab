@@ -42,8 +42,12 @@ def main():
             .merge(pl, on=["race_id", "lane"], how="left")
             .merge(wn, on=["race_id", "lane"], how="left"))
     has = set(pl["race_id"].unique())
-    d = d[d["race_id"].isin(has)].copy()
+    # **返還（amount=-1）は投資が戻るので中立。必ず除外する。**
+    # 2026-09-18: 除外を忘れて 3,904本を「払戻−1円」として集計し、基準が 94.48% → 93.70% と
+    # 0.78pt 低く出ていた（`run_lane_place.py` では正しく除外していた）。
+    d = d[d["race_id"].isin(has) & (d["pl"] != -1) & (d["wn"] != -1)].copy()
     d["pl"] = d["pl"].fillna(0.0); d["wn"] = d["wn"].fillna(0.0)
+    assert (d["pl"] >= 0).all() and (d["wn"] >= 0).all(), "返還の番号(-1)が残っている"
     N = d["race_id"].nunique()
     one = d[d["lane"] == 1].set_index("race_id")
 
@@ -76,7 +80,8 @@ def main():
     o = one.drop(columns=["klass_n"], errors="ignore").join(
         r[r["lane"] == 1].set_index("race_id")[[f"rk_{c}" for c, _ in RANKS] + ["klass_n"]])
     be = o.loc[o["year"] <= 2023, "pl"].mean(); bc = o.loc[o["year"] >= 2024, "pl"].mean()
-    L += [f"基準（全レースで1号艇の複勝）: **{o['pl'].mean():.1f}%**（探索 {be:.1f}% / 確認 {bc:.1f}%）\n",
+    L += [f"基準（全レースで1号艇の複勝）: **{o['pl'].mean():.2f}%**（探索 {be:.1f}% / 確認 {bc:.1f}%）",
+          "**返還（投資が戻る）のレースは除外している。** 含めると払戻ゼロと同じ扱いになり 0.8pt 低く出る。\n",
           "| 条件 | レース数 | 1日 | 的中率 | 回収率 | ±95% | 探索→確認 |",
           "|---|---:|---:|---:|---:|---:|---|"]
     days = 365 * 9
@@ -141,8 +146,11 @@ def main():
           f"2. **検定2は新しい。** 1号艇の複勝を モーター2連率1位＋展示タイム1位 で絞ると "
           f"**{o.loc[best,'pl'].mean():.1f}%**（n={int(best.sum()):,}、1日{int(best.sum())/days:.1f}本、"
           f"±{1.96*o.loc[best,'pl'].std()/100/np.sqrt(int(best.sum()))*100:.2f}、帰無 {int((n2>=v2).sum())}/1000）。",
-          f"   基準93.7%から **+{o.loc[best,'pl'].mean()-o['pl'].mean():.1f}pt**。元返しを除いても +5pt 残る。",
-          "3. **それでも100%には届かない。** しかも `sweet_spot.md` の「市場の確信度上位10%の複勝 99.1%」に負ける。",
+          f"   基準 {o['pl'].mean():.1f}% から **+{o.loc[best,'pl'].mean()-o['pl'].mean():.1f}pt**。"
+          f"元返しを除いても +{o.loc[best&nm_,'pl'].mean()-o.loc[nm_,'pl'].mean():.1f}pt 残る。",
+          f"3. **それでも100%には届かない**（区間上限 "
+          f"{(o.loc[best,'pl'].mean()/100+1.96*o.loc[best,'pl'].std()/100/np.sqrt(int(best.sum())))*100:.1f}%）。"
+          "`sweet_spot.md` の「市場の確信度上位10%の複勝 99.1%」にもわずかに及ばない。",
           "   **市場自身の確信度は、どの公開観測量よりも良いフィルタ。** これは goal1 の言い換えでもある。",
           "4. **方法論**: 飛躍17（グレード）・18（場）と違い、ここは**2026年のみの結論が46万レースでも覆らなかった**。",
           "   「検出力不足で見落とした」は毎回ではない。**測り直して初めて分かる。**"]
