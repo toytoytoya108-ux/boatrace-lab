@@ -23,7 +23,7 @@ import numpy as np
 
 from boatlab.model.trifecta import PERMS
 
-MODES_VERSION = "modes3"
+MODES_VERSION = "modes4"   # 2026-09-21: ev1（期待値1以上）を追加
 UNIT = 100
 Q_MAN = 0.0075                                  # オッズ100倍 ⟺ 万舟
 _A = np.array([p[0] for p in PERMS])
@@ -74,7 +74,20 @@ MEASURED = {
                     per_day=10.6, stake_per_race=100, source="condition_rules.md §3"),
     "tansho": dict(roi=0.948, roi_lo=0.93, roi_hi=0.96, hit=0.850, avg_payout=112, max_lose=None,
                    per_day=15.0, stake_per_race=100, source="two_modes.md §D"),
+    # 2026-09-21: 期待値1以上モードの実績規則（複勝 × 1号艇モーター2連率1位＋展示タイム1位＋上位8場）。
+    # オッズ不要・46万レース、探索2018〜23=101.9% → 確認2024〜26=101.2%（n=3,282、97.9〜104.4）。
+    # 「超えている」確率は75%で、確定には約15年分の本数が要る。上積みは1日+4円。
+    "ev1": dict(roi=1.012, roi_lo=0.979, roi_hi=1.044, hit=0.826, avg_payout=122, max_lose=3,
+                per_day=3.3, stake_per_race=100, source="leaps12.md §5（確認2024〜26）"),
 }
+
+# 期待値1以上モード
+# 実績規則の場: leaps8.md で探索期間(2018〜23)に選んだ上位8場（江戸川・大村・津・徳山・びわこ・尼崎・宮島・福岡）
+EV1_STADIUMS = (3, 24, 9, 18, 11, 13, 17, 22)
+# 較正: p ∝ モデル^a × 市場^b（market_combine.md、2026年1〜5月の確定オッズで最尤推定）
+EV1_CAL_A, EV1_CAL_B = 0.150, 0.926
+# 締切2〜4分前のオッズは確定までに下がる。当たった目の下落は中央値 ×0.906（winner-drift、9/16以降）。
+EV1_ODDS_RATIO = 0.90
 
 
 @dataclass
@@ -105,6 +118,15 @@ class ModeParams:
     tansho_enabled: bool = True
     tansho_q_min: float = 0.7709        # 市場の1着確率の上位10%
     place_stake: int = 100
+
+    # 期待値1以上（2026-09-21）: 実績規則（複勝）＋較正期待値（3連単）
+    ev1_enabled: bool = True
+    ev1_stadiums: tuple = EV1_STADIUMS
+    ev1_place_stake: int = 100
+    ev1_ev_min: float = 1.0
+    ev1_odds_ratio: float = EV1_ODDS_RATIO
+    ev1_stake3t: int = 100
+    ev1_points_max: int = 3
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -298,6 +320,89 @@ def select_place(odds3t: np.ndarray, prm: ModeParams) -> dict:
               lane=ms["q1_arg"] + 1, q=ms["q1_max"], stake=prm.place_stake,
               reason=None if prm.tansho_enabled and ms["q1_max"] >= prm.tansho_q_min else "q_low")
     return dict(fukusho=fk, tansho=tn, q_man=ms["q_man"])
+
+
+# ---------------------------------------------------------------- 期待値1以上
+def _rank_min_desc(vals: list) -> list:
+    """降順の順位（method='min'、None は順位なし）。1位 = 自分より大きい値が無い。"""
+    out = []
+    for i, v in enumerate(vals):
+        if v is None:
+            out.append(None)
+            continue
+        out.append(1 + sum(1 for j, w in enumerate(vals) if j != i and w is not None and w > v))
+    return out
+
+
+def calibrated_probs(p_model: np.ndarray, q: np.ndarray, a: float = EV1_CAL_A, b: float = EV1_CAL_B) -> np.ndarray:
+    """市場で較正した確率 p ∝ モデル^a × 市場^b（Benter形）。a=0.15 なので市場が主、モデルは味付け。"""
+    # 下限は極小にする。1e-12 で切ると q<1e-12 の目（オッズ1兆倍のような異常値）の確率が押し上げられ、
+    # 期待値が数倍に化ける（出荷前チェックで実際に出た）。
+    s = a * np.log(np.clip(np.asarray(p_model, float), 1e-300, None)) + b * np.log(np.clip(np.asarray(q, float), 1e-300, None))
+    s -= s.max()
+    e = np.exp(s)
+    return e / e.sum()
+
+
+def select_ev1(boat_eval: dict | None, stadium_code: int, odds3t: np.ndarray | None, p_model: np.ndarray | None,
+               prm: ModeParams) -> dict:
+    """期待値1以上モード。買うのは次の2つだけ。
+
+    rule: 実績規則。1号艇のモーター2連率が6艇で1位 かつ 展示タイムが1位 かつ 上位8場 → 1号艇の複勝を1点。
+          オッズを使わないので推定オッズの日でも成立する（leaps12.md、確認期間101.2%）。
+    cal:  較正期待値。p_cal = 正規化(モデル^0.15 × 市場^0.926)、期待値 = p_cal × 締切前オッズ × 下落率(0.90)。
+          期待値 ≥ ev1_ev_min の目だけ（上位 ev1_points_max 点）。実オッズが無ければ見送り。
+          めったに出ない（確認期間3か月で12件）。出なかったときは最大期待値の1点を「買うならこれ」として参考記録する。"""
+    be = boat_eval or {}
+    lanes = [str(k) for k in range(1, 7)]
+    reason = None
+    if not prm.ev1_enabled:
+        reason = "disabled"
+    elif not be or "1" not in be:
+        reason = "boat_eval_missing"
+    b1 = be.get("1") or {}
+    motor_rank = ext_rank = None
+    if reason is None:
+        mr = _rank_min_desc([(be.get(k) or {}).get("motor_rate2") for k in lanes])
+        motor_rank = mr[0]
+        ext_rank = b1.get("exhibition_rank")
+        if motor_rank is None:
+            reason = "entries_missing"
+        elif ext_rank is None:
+            reason = "preview_missing"
+    stadium_ok = int(stadium_code) in set(int(x) for x in prm.ev1_stadiums)
+    rule_ok = reason is None and motor_rank == 1 and int(ext_rank) == 1 and stadium_ok
+    if reason is None and not rule_ok:
+        reason = "rule_not_met"
+    rule = dict(fired=bool(rule_ok), reason=(None if rule_ok else reason), lane=1, stake=int(prm.ev1_place_stake),
+                motor_rank=motor_rank, ext_rank=ext_rank, stadium_ok=stadium_ok)
+
+    cal = dict(fired=False, reason=None, points=[], stakes=[], ev=[], odds=[], p_cal=[], max_ev=None, max_label_idx=None)
+    q = market_probs(odds3t) if odds3t is not None else None
+    if not prm.ev1_enabled:
+        cal["reason"] = "disabled"
+    elif q is None or p_model is None:
+        cal["reason"] = "odds_missing"
+    else:
+        o = np.asarray(odds3t, float)
+        pc = calibrated_probs(p_model, q)
+        # 公式の3連単オッズは最大でも数万倍。それ以上は表の読み違いか異常値なので候補から外す
+        ok = np.isfinite(o) & (o > 0) & (o <= 1e5)
+        ev = np.where(ok, pc * o * float(prm.ev1_odds_ratio), 0.0)
+        top = int(np.argmax(ev))
+        cal["max_ev"] = float(ev[top]); cal["max_label_idx"] = top
+        idx = [int(i) for i in np.argsort(-ev) if ev[i] >= float(prm.ev1_ev_min)][: int(prm.ev1_points_max)]
+        if idx:
+            cal.update(fired=True, points=idx)
+        else:
+            cal.update(fired=False, reason="ev_below_min", points=[top])   # 参考記録（見送りの仮想採点用）
+        cal["stakes"] = [int(prm.ev1_stake3t)] * len(cal["points"])
+        cal["ev"] = [float(ev[i]) for i in cal["points"]]
+        cal["odds"] = [float(o[i]) for i in cal["points"]]
+        cal["p_cal"] = [float(pc[i]) for i in cal["points"]]
+    fired = bool(rule["fired"] or cal["fired"])
+    # 見送り理由は規則側のもの（データ不足か、条件を満たさないか）。較正側の理由は cal.reason に残る。
+    return dict(fired=fired, reason=(None if fired else rule["reason"]), rule=rule, cal=cal)
 
 
 # ---------------------------------------------------------------- 荒れ理由タグ・堅い注意タグ（2026-09-12、ana_playbook.md）

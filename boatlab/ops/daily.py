@@ -27,7 +27,7 @@ from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
 from boatlab.model.modes import (HONMEI_MULTIPLE, MODES_VERSION, ModeParams, honmei_grid_for, market_probs,
                                  race_tags, select_ana, select_honmei,
-                                 select_katai, select_katai_top, select_place)
+                                 select_ev1, select_katai, select_katai_top, select_place)
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
@@ -173,7 +173,7 @@ def modes_from_settings(row: SettingsVersion) -> ModeParams:
     return prm
 
 
-MODE_ROLES = ("ana", "katai", "katai_t", "honmei", "place")
+MODE_ROLES = ("ana", "katai", "katai_t", "honmei", "place", "ev1")
 
 
 def staking_from_settings(row: SettingsVersion) -> StakingParams:
@@ -405,6 +405,27 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
                  ([f"複勝 {fk['lane']}号艇（市場の2着以内確率 {fk['q']:.3f}）"] if fk["fired"] else []) +
                  ([f"単勝 {tn['lane']}号艇（市場の1着確率 {tn['q']:.3f}）"] if tn["fired"] else []))
               if fired else f"複勝・単勝: 見送り（{fk.get('reason') or 'q_low'}）"))
+    if rid not in done_m["ev1"]:
+        # 期待値1以上: 実績規則（オッズ不要）＋較正期待値（実オッズのときだけ）
+        parr = np.array([float(o["probs"][k]) for k in _PL])
+        e1 = select_ev1(o["boat_eval"], r.stadium_code, oarr if real else None, parr, prm)
+        ru, ca = e1["rule"], e1["cal"]
+        # 買い目 = 発火した側だけ。両方見送りのときだけ、較正の最大期待値の1点を「買うならこれ」として残す
+        # （見送りの仮想採点用）。発火した行に参考点を混ぜると投資に数えられて採点が狂う（出荷前チェックで発見）。
+        sels = ([dict(combo="複1", kind="fukusho", stake=ru["stake"], prob=None, odds=None)] if ru["fired"] else []) + \
+               ([dict(combo=_PL[j], kind="ev3t", stake=st, prob=pc, odds=od)
+                 for j, st, pc, od in zip(ca["points"], ca["stakes"], ca["p_cal"], ca["odds"])]
+                if (ca["fired"] or not e1["fired"]) else [])
+        _add("ev1", e1["fired"], e1["reason"],
+             dict(rule=ru, cal={k: v for k, v in ca.items() if k not in ("points", "stakes", "ev", "odds", "p_cal")},
+                  cal_ev=ca["ev"], n_points=len(sels), stake_total=int(sum(x["stake"] for x in sels))),
+             sels,
+             ("期待値1以上: " + "、".join(
+                 ([f"複勝 1号艇（モーター2連率1位・展示タイム1位・上位8場）"] if ru["fired"] else []) +
+                 ([f"3連単 {len(ca['points'])}点（較正期待値 {max(ca['ev']):.2f}）"] if ca["fired"] else []))
+              if e1["fired"] else
+              f"期待値1以上: 見送り（{e1['reason']}"
+              + (f"／較正期待値の最大 {ca['max_ev']:.2f}" if ca.get("max_ev") is not None else "／較正期待値は実オッズ待ち") + "）"))
 
 
 # ---------------------------------------------------------------- score
@@ -445,6 +466,26 @@ def score_place(sels, payouts: dict | None, refund_lanes: list, cancelled: bool 
                 refunded_points=ref_pts, refunded_stake=ref_stake)
 
 
+def score_ev1(sels, res, r, tri: int | None, decision: str) -> dict:
+    """期待値1以上モードの採点。複勝（kind=fukusho）と3連単（kind=ev3t）が混ざる。
+    見送り行では規則側の複勝は入っていないので、較正側の参考1点だけが仮想採点される。"""
+    fk = [x for x in sels if x.kind == "fukusho"]
+    t3 = [x for x in sels if x.kind == "ev3t"]
+    cancelled = r.status == "cancelled"
+    a = score_place(fk, res.payouts, res.refunds or [], cancelled=cancelled, has_result=bool(res.trifecta)) if fk else None
+    b = None
+    if t3:
+        b = score_race([combo_index(x.combo) for x in t3], [], -1 if tri is None else tri, res.trifecta_payout,
+                       res.refunds or [], t3[0].stake, cancelled=cancelled, stakes=[int(x.stake) for x in t3])
+    parts = [x for x in (a, b) if x is not None]
+    if not parts or not all(x["valid"] for x in parts):
+        return dict(valid=False, hit=None, hit_kind=None, stake_total=0, payout_total=0, pnl=0,
+                    refunded_points=0, refunded_stake=0)
+    hit_kind = "fukusho" if (a and a["hit"]) else ("ev3t" if (b and b["hit"]) else None)
+    tot = {k: sum(int(x[k]) for x in parts) for k in ("stake_total", "payout_total", "refunded_points", "refunded_stake")}
+    return dict(valid=True, hit=hit_kind is not None, hit_kind=hit_kind, pnl=tot["payout_total"] - tot["stake_total"], **tot)
+
+
 def score_pending() -> dict:
     n = 0
     with session_scope() as s:
@@ -470,6 +511,8 @@ def score_pending() -> dict:
             if mode == "place":
                 sc = score_place(sels, res.payouts, res.refunds or [], cancelled=(r.status == "cancelled"),
                                  has_result=bool(res.trifecta))
+            elif mode == "ev1":
+                sc = score_ev1(sels, res, r, tri, p.decision)
             else:
                 sel_idx = [combo_index(x.combo) for x in sels]
                 main_idx = [combo_index(x.combo) for x in sels if x.kind == "main"]

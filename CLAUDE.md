@@ -1456,3 +1456,38 @@ n=4,162、探索105.9% → 確認111.8%、帰無2000回で 9/2000。**それで�
 `place_pay.parquet` は**的中した艇しか持たない**。母集団「複勝の払戻が存在するレース」は lane==1 で絞る**前**に取ること。
 絞った後に取ると「1号艇が2着以内に入ったレース」だけになり、1号艇複勝の回収率が 94.9% → **131%** に化ける
 （初回実行で実際に出た。`assert 0.60 < 的中率 < 0.85` を入れて再発防止）。
+
+## 期待値1以上モード ev1（2026-09-21、modes_version="modes4"、SW bl-v20）
+
+**ユーザーの最低条件**: 「期待値が1以上になるレースのみを選んで買う。これで長期的に回収率プラスを目指す」。
+期待値の定義は3通りあり結果が真逆になるので確認した → **「実績＋較正の併用」に決定**:
+- 定義1 モデル生の期待値 ≥1.0: 実測76%（絞らない78.5%より悪い、winner's curse）。**不採用**。9/7に絞り込み型を0.8に下げた理由。
+- 定義2 市場で較正した期待値 ≥1.0: 確認3か月170万買い目で12件。正しいがほぼ買えない。→ **表示し、出た時だけ推奨**。
+- 定義3 実績で100%超えを保った規則: 複勝×モーター1位＋展示1位＋上位8場（101.2%、1日3.3本）の1本。→ **買うのはこれ**。
+既存5モード（穴・堅い・堅い厚め・本命・複勝単勝）は「参考」に降格（画面ラベル）。記録・採点は従来どおり続く。
+
+### 実装（role='ev1'、`select_ev1` in modes.py、`_record_modes`/`score_ev1` in daily.py）
+- rule: `boat_eval` の 1号艇 motor_rate2 が6艇で1位（同率は1位、method=min）かつ exhibition_rank==1 かつ
+  stadium_code ∈ `ev1_stadiums`=(3,24,9,18,11,13,17,22) → 買い目「複1」kind=fukusho 100円。**オッズ不要**なので推定オッズの日でも成立。
+- cal: `calibrated_probs(p_model, q)` = 正規化(モデル^0.150 × 市場^0.926)、期待値 = p_cal × 締切前オッズ × `ev1_odds_ratio`(0.90)。
+  ≥ `ev1_ev_min`(1.0) の目を上位 `ev1_points_max`(3) 点、kind=ev3t 100円。実オッズが無ければ reason=odds_missing。
+- 買い目は**発火した側だけ**。両方見送りのときだけ較正の最大期待値1点を参考記録（見送りの仮想採点用）。
+  **発火行に参考点を混ぜると投資に数えられて採点が狂う**（出荷前チェックで発見・修正）。
+- 採点 `score_ev1`: fukusho は payouts.place、ev3t は score_race。hit_kind は "fukusho"/"ev3t"。
+- 見送り理由コード: rule_not_met / boat_eval_missing / entries_missing / preview_missing / disabled。cal 側は flags.cal.reason。
+- 実測 `MEASURED["ev1"]`: roi 1.012 (0.979〜1.044)、hit 0.826、avg_payout 122、per_day 3.3（leaps12.md §5）。
+  月の期待損失が負になるので画面は「なし（月 +119円の見込み）」と出す。
+- 画面: ev1 を先頭・既定モードに。REASON/planOf/renderRace/設定/CSV に追加。他モードの small ラベルは「参考」。
+
+### 出荷前チェックで踏んだ罠
+1. `calibrated_probs` の clip 1e-12: q<1e-12 の目（オッズ1兆倍の模擬値）が押し上げられ較正期待値 4.7 が出た →
+   clip を 1e-300 に、かつ **オッズ >1e5 は候補から外す**。市場=モデルのとき全200試行で期待値<1.0 を確認。
+2. 上記の参考点混入（採点 200円投資になっていた）。
+3. 検査DBの締切を過去にしたら全行 created_after_close で無効（検査側のミス。締切は未来・結果取得はその後にする）。
+確認: pytest 全件通過（tests/test_ev1.py 7件追加、test_live_loop は ×8 に）、TestClient で /api/modes・today・stats・export.csv・
+races・status、設定PUT→modes_from_settings の往復、Playwright 390px でホーム・レース（推奨/見送り）・設定を目視。
+
+### 未検証（本番で確認すること）
+- 本番の boat_eval に exhibition_rank / motor_rate2 が入っているか（`/api/races/<id>` の predictions[].boat_eval）。
+- 較正の a,b は**確定オッズ**で推定した値。締切前オッズでの再推定は記録が貯まってから。
+- 規則の成立本数は理論上1日3.3本。数日で `lab modes` の ev1 行で確認。

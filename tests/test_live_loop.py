@@ -65,7 +65,7 @@ def test_train_predict_score(tmp_path, monkeypatch):
     # 3モード（穴・堅い・複勝単勝）も確定予想と同時に記録される。市場ベースの2つは
     # 実オッズが無いレースでは skip（odds_estimated）として残る＝黙って欠ける記録は無い
     with dbmod.session_scope() as s:
-        for role in ("ana", "katai", "katai_t", "honmei", "place"):
+        for role in ("ana", "katai", "katai_t", "honmei", "place", "ev1"):
             mps = s.execute(select(Prediction).where(Prediction.model_version == "test-0.1", Prediction.role == role)).scalars().all()
             assert len(mps) == out["predicted"], role
             for mp in mps:
@@ -93,10 +93,19 @@ def test_train_predict_score(tmp_path, monkeypatch):
                         f = mp.flags
                         assert total <= 10000 and f["min_payout"] >= total * 1.5 - 1e-6
                         assert all(x.stake * x.odds_at_pred >= f["min_payout"] - 1e-6 for x in msel)
+                elif role == "ev1":
+                    # 規則が成立すれば 複1（オッズ不要）。較正は実オッズのときだけ。見送り行は較正の参考1点（実オッズ時）か空
+                    f = mp.flags
+                    assert (mp.decision == "buy") == bool(f["rule"]["fired"] or f["cal"]["fired"])
+                    if mp.decision == "buy":
+                        assert all(x.kind in ("fukusho", "ev3t") for x in msel) and (f["rule"]["fired"] or f["cal"]["fired"])
+                    else:
+                        assert len(msel) <= 1 and all(x.kind == "ev3t" for x in msel)
+                        assert (msel == []) == (f["cal"]["reason"] != "ev_below_min")
                 else:
                     assert 1 <= len(msel) <= 2 and all(x.kind in ("fukusho", "tansho") and x.combo[0] in "複単" and x.combo[1:] in "123456" for x in msel)
     sc = daily.score_pending()
-    assert sc["scored"] == out["predicted"] * 7  # 本体＋絞り込み型＋5モード
+    assert sc["scored"] == out["predicted"] * 8  # 本体＋絞り込み型＋6モード
     with dbmod.session_scope() as s:
         rows = s.execute(select(Scoring)).scalars().all()
         # 過去日シミュレーション → created_at > 締切 → 全件 invalid（リーク検査が働いている）
