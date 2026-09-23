@@ -206,5 +206,5 @@ def test_ev1_rule_records_on_estimated_odds(db):
         assert p.decision == "buy" and p.flags["cal"]["reason"] == "odds_missing"
         sels = s.query(mm.PredictionSelection).filter_by(prediction_id=p.id).all()
         assert [x.kind for x in sels] == ["fukusho"]
-        ana = s.query(mm.Prediction).filter_by(role="ana").one()
-        assert ana.decision == "skip"                   # 市場ベースのモードは推定オッズでは見送りのまま
+        hm = s.query(mm.Prediction).filter_by(role="honmei").one()
+        assert hm.decision == "skip"                    # 市場ベースのモードは推定オッズでは見送りのまま

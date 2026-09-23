@@ -68,11 +68,12 @@ pre.md{white-space:pre-wrap;font-size:12px;background:var(--sf2);padding:10px;bo
 .buyrow.soon .h{color:var(--buoy)}.buyrow.done{opacity:.85}
 .vs{display:grid;grid-template-columns:auto 1fr 1fr;gap:4px 10px;font-size:13px;align-items:baseline}.vs .k{color:var(--ink2);font-size:12px}.vs .v{font-family:var(--mono);font-weight:700;text-align:right}.vs .hd{font-size:11px;color:var(--ink2);text-align:right}
 .empty{padding:14px 4px;color:var(--ink2);font-size:13px}
+.btn.rate{padding:6px 12px;font-size:16px;min-width:44px}.btn.rate.on{background:var(--ok);color:#fff;border-color:transparent}.btn.rate.onx{background:var(--ng);color:#fff;border-color:transparent}.btn.rate:disabled{opacity:.4}
 </style>
 </head>
 <body>
 <div class="app" id="app">
-  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ev1">期待値1以上<small>複勝規則＋較正</small></button><button data-m="ana">穴狙い<small>参考</small></button><button data-m="katai">堅い予想<small>参考</small></button><button data-m="katai_t">堅い·厚め<small>参考</small></button><button data-m="honmei">本命10<small id="hmLbl">参考</small></button><button data-m="place">複勝·単勝<small>参考</small></button></div></header>
+  <header><h1>🚤 Lab</h1><div class="sub" id="hdr"></div><div class="modeTog" id="modeTog"><button data-m="ev1">期待値1以上<small>複勝規則＋較正</small></button><button data-m="katai_t">堅い予想<small>上位に厚く</small></button><button data-m="honmei">本命5本<small id="hmLbl">保証つき</small></button><button data-m="place">複勝·単勝<small>市場の確信</small></button></div></header>
   <div class="offline" id="offline">オフライン表示（最終取得時点のデータ）</div>
   <main id="main"></main>
 </div>
@@ -95,21 +96,23 @@ const fmtLoss = v => v >= 10000 ? `約${(v / 10000).toFixed(1)}万円` : `約${f
 let saved = {}; try { saved = JSON.parse(localStorage.getItem("bl_state") || "{}"); } catch (e) {}
 const state = Object.assign({ view: "home", raceId: null, day: null, mode: "ev1", rv: "stadiums", statsBy: "month", statsRange: "all",
   f: { stadium: "", dec: "buy" } }, saved);
-const MAIN_MODES = ["ev1", "ana", "katai", "katai_t", "honmei", "place"];
+const MAIN_MODES = ["ev1", "katai_t", "honmei", "place"];
 if (!MAIN_MODES.includes(state.mode)) state.mode = "ev1";
 function persist() { try { localStorage.setItem("bl_state", JSON.stringify({ mode: state.mode, f: state.f, rv: state.rv, statsBy: state.statsBy })); } catch (e) {} }
-const MODE_ROLE = { ev1: "ev1", ana: "ana", katai: "katai", katai_t: "katai_t", honmei: "honmei", place: "place" };
+const MODE_ROLE = { ev1: "ev1", katai_t: "katai_t", honmei: "honmei", place: "place" };
+const RATED = { ev1: "ev1R", katai_t: "katai_tR", honmei: "honmeiR" };   // ◎×を加味した版の role（複勝は市場だけで決めるので無い）
 // 本命10点の保証倍率は設定で変わる（2026-09-15: 1.5 → 1.62）。
 // **画面に直書きすると設定と食い違って嘘になる**ので、/api/modes の params から出す。
 let HMULT = 1.62;
 const hm = (t) => String(t).replace(/\{M\}/g, HMULT.toFixed(2).replace(/0$/, "").replace(/\.$/, ""));
-const MODE_NAME_T = { ev1: "期待値1以上（複勝規則＋較正3連単）", ana: "3連単（穴狙い）", katai: "3連単（堅い予想・保証つき）", katai_t: "3連単（堅い予想・上位厚め）", honmei: "3連単（本命10点・{M}倍保証）", place: "複勝・単勝", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
+const MODE_NAME_T = { ev1: "期待値1以上（複勝規則＋較正3連単）", katai_t: "3連単（堅い予想・上位厚め）", honmei: "3連単（本命5本・{M}倍保証）", place: "複勝・単勝",
+  ana: "3連単（穴狙い・旧）", katai: "3連単（堅い予想・保証つき・旧）", active: "15点固定（旧）", focused: "絞り込み型（旧）" };
 const MODE_NAME = new Proxy(MODE_NAME_T, { get: (o, k) => (typeof o[k] === "string" ? hm(o[k]) : o[k]) });
 const MODE_ONE = { ev1: "買うのは期待値1以上が確認できたものだけ。①実績規則: 1号艇のモーター2連率1位＋展示タイム1位＋上位8場なら1号艇の複勝を1点（過去46万レースで探索101.9%→確認101.2%）。②較正期待値: 市場で較正した3連単の期待値が1.0以上の目だけ（めったに出ない）。他のモードは参考",
   ana: "市場が荒れると見ているレースだけ、人気20〜40番目の3連単21点を100円ずつ",
   katai: "本線を「当たれば必ず投資額以上」が成り立つ点数まで削って買う（信頼度0.70以上のレースのみ）",
   katai_t: "本線10点を3,000円固定で、1点目に厚く（1,000/500/300/300/200/200/200/100/100/100円）。当たっても赤字の回がある代わりに回収率は高め",
-  honmei: "本線10点を「当たれば必ず投資の{M}倍以上」になる配分で。1日5枠を、残り枠と残りレース数で決まるしきい値で配る（早い時間ほど厳しい）",
+  honmei: "本線10点を「当たれば必ず投資の{M}倍以上」になる配分で。1日5本の枠を、残り枠と残りレース数で決まるしきい値で配る（早い時間ほど厳しい）",
   place: "市場がいちばん確信している艇を1点。複勝は2着以内確率0.90以上、単勝は1着確率0.771以上" };
 const REASON = { confidence: "信頼度が基準未満", confidence_low: "信頼度が基準未満", expected_return: "期待回収率が基準未満", incomplete: "データ未取得",
   odds_estimated: "実オッズ未取得", odds_missing: "実オッズ未取得", q_man_low: "市場が荒れると見ていない", q_low: "市場の確信度が基準未満",
@@ -123,7 +126,7 @@ async function modesData(day) {
   const k = day || "";
   if (MODES_CACHE.key !== k) MODES_CACHE = { key: k, v: await api("/api/modes" + (day ? "?d=" + day : "")) };
   const m = MODES_CACHE.v && MODES_CACHE.v.params && MODES_CACHE.v.params.honmei_multiple;
-  if (m) { HMULT = Number(m); const e = document.getElementById("hmLbl"); if (e) e.textContent = hm("{M}倍·参考"); }
+  if (m) { HMULT = Number(m); const e = document.getElementById("hmLbl"); if (e) e.textContent = hm("{M}倍保証"); }
   return MODES_CACHE.v;
 }
 async function api(path, opt) {
@@ -175,8 +178,12 @@ function tagPills(flags, withSolid=true) {
   const f = flags || {};
   const a = (f.tags || []).map(k => `<span class="tag ${PRE.has(k) ? "pre" : ""}">${PRE.has(k) ? "★" : ""}${TAGS[k] || k}</span>`);
   const b = withSolid ? (f.solid_tags || []).map(k => `<span class="tag solid">⚠ ${TAGS[k] || k}</span>`) : [];
-  return a.concat(b).join("");
+  // 穴狙いの記録は止めたが「市場が荒れると見ている」要素は全モードに出す（万舟確率＝オッズ100倍以上の目の市場確率の合計）
+  const c = f.rough_market ? [`<span class="tag" style="border-color:var(--warn,#b8860b);color:var(--warn,#b8860b)">市場は荒れ予想 ${(f.q_man*100).toFixed(1)}%</span>`] : [];
+  const d = f.rated ? [`<span class="tag">◎×加味</span>`] : [];
+  return a.concat(b, c, d).join("");
 }
+const ratedPill = r => r.rated ? `<span class="tag">◎×加味あり</span>` : (r.has_ratings ? `<span class="tag">◎×入力（予想には未反映）</span>` : "");
 function planOf(r) {
   // 買い目の要約（一覧用）
   const f = r.flags || {};
@@ -201,7 +208,7 @@ function buyRow(r) {
   const mins = minsTo(r.closed_at), soon = mins != null && mins > 0 && mins <= 15, done = !!r.trifecta || r.valid;
   const when = mins == null ? "" : (mins > 0 && !done ? `締切 ${hhmm(r.closed_at)}${mins <= 60 ? `（あと${mins}分）` : ""}` : `締切 ${hhmm(r.closed_at)}`);
   return `<div class="buyrow ${soon ? "soon" : ""} ${done ? "done" : ""}" onclick="go('race',{raceId:${r.id}})">
-    <div><div class="h">${r.stadium} ${r.race_no}R<small>${when}</small></div><div class="p">${planOf(r)}</div><div>${tagPills(r.flags)}</div></div>
+    <div><div class="h">${r.stadium} ${r.race_no}R<small>${when}</small></div><div class="p">${planOf(r)}</div><div>${tagPills(r.flags)}${ratedPill(r)}</div></div>
     <div class="r">${resultPill(r)}</div></div>`;
 }
 function measuredVs(role, md) {
@@ -236,7 +243,17 @@ async function renderHome(m) {
     <h2>今日の収支（推奨のみ・仮想）</h2><div class="kpis">${kpi("投資", fmtN(d.stake)+"円")}${kpi("払戻", fmtN(d.payout)+"円")}${kpi("損益", fmtY(d.payout - d.stake), d.payout - d.stake >= 0 ? "pos" : "neg")}</div>
     <p class="muted">${scored.length ? `${d.hits}/${scored.length} 的中` : "まだ結果が出たレースはありません"} · 見送り含む全レース仮想：${d.virtual_hits}/${d.n} 的中、${fmtY(d.virtual_payout - d.virtual_stake)}</p>
     ${measuredVs(MODE_ROLE[state.mode], md)}
-    ${state.mode === "ana" ? tagVerifyCard(md) : ""}`;
+    ${ratedCard(md)}`;
+}
+function ratedCard(md) {
+  const rt = md.rated; if (!rt || !RATED[state.mode]) return "";
+  const s = rt[MODE_ROLE[state.mode]] || { n: 0 }, cal = rt.calibration || { n: 0 };
+  const row = (nm, a) => a ? `<tr><td>${nm}</td><td class="n">${a.buys}</td><td class="n">${a.hits}</td><td class="n">${fmtP(a.roi)}</td><td class="n">${fmtY(a.pnl)}</td></tr>` : "";
+  const verdict = { few: "まだ少ない（100レースから判定）", no_evidence: "評価なしと区別できない", evidence: "評価は効いている" }[cal.verdict] || "";
+  return `<details class="sec" open><summary>◎×（展示評価）の検証 <span class="muted">${s.n || 0}対</span></summary><div class="card">
+    <p class="muted" style="margin-top:0">同じレースの「評価なし」と「評価あり」を対で採点した結果（見送りも仮想で採点）。</p>
+    <div class="tbl"><table><tr><th></th><th class="n">推奨</th><th class="n">的中</th><th class="n">回収率</th><th class="n">損益</th></tr>${row("評価なし", s.base)}${row("評価あり", s.rated)}</table></div>
+    <p class="muted" style="margin:8px 0 0">評価の効き（推定）: ${cal.n ? `<b>${cal.beta_hat}</b>（区間 ${cal.ci ? cal.ci[0] + "〜" + cal.ci[1] : "–"}、n=${cal.n}）· ${verdict}` : "結果の出た評価ありレースがまだありません"} · 設定は ${rt.beta_setting}${cal.good ? `<br>◎の艇: モデル1着確率 ${fmtP(cal.good.model_win)} → 実際 ${fmtP(cal.good.actual_win)}（${cal.good.n}艇）` : ""}${cal.bad ? `　×の艇: ${fmtP(cal.bad.model_win)} → ${fmtP(cal.bad.actual_win)}（${cal.bad.n}艇）` : ""}<br>推定値は提案で、設定タブの「評価の効き」を変えるまで予想には反映されません。</p></div></details>`;
 }
 function tagVerifyCard(md) {
   const bt = md.modes.ana && md.modes.ana.by_tag; if (!bt) return "";
@@ -271,7 +288,7 @@ function stadiumCard(s) {
 function raceRow(r) {
   const dec = r.decision ? `<span class="pill ${r.decision}">${r.decision === "buy" ? "推奨" : "見送り"}</span>` : `<span class="pill">未予想</span>`;
   return `<div class="row" onclick="go('race',{raceId:${r.id}})"><div class="t"><b>${r.stadium} ${r.race_no}R</b> <small>締切 ${hhmm(r.closed_at)} · ${r.grade || ""} ${r.race_type || ""}</small>
-    <small>${planOf(r)}</small><div>${tagPills(r.flags)}</div></div><div class="right">${dec}<br>${resultPill(r)}</div></div>`;
+    <small>${planOf(r)}</small><div>${tagPills(r.flags)}${ratedPill(r)}</div></div><div class="right">${dec}<br>${resultPill(r)}</div></div>`;
 }
 async function renderRaces(m) {
   const t = await api("/api/today?" + mq() + (state.day ? "&d=" + state.day : ""));
@@ -321,44 +338,74 @@ async function renderRace(m) {
   const d = await api("/api/races/" + state.raceId);
   const r = d.race, role = MODE_ROLE[state.mode];
   const p = d.predictions.find(x => x.stage === "final" && x.role === role);
+  const pR = RATED[state.mode] ? d.predictions.find(x => x.stage === "final" && x.role === RATED[state.mode]) : null;
   const others = d.predictions.filter(x => x.stage === "final" && MAIN_MODES.some(k => MODE_ROLE[k] === x.role) && x.role !== role);
   const modeOf = rl => Object.keys(MODE_ROLE).find(k => MODE_ROLE[k] === rl) || rl;
   $("#hdr").textContent = `${r.stadium} ${r.race_no}R`;
-  const c = d.conditions, mins = minsTo(r.closed_at);
+  const c = d.conditions, mins = minsTo(r.closed_at), won = r.trifecta;
   let html = `<p><button class="btn ghost" onclick="goBack()">‹ 戻る</button></p>
     <div class="card"><b style="font-size:17px">${r.stadium} ${r.race_no}R</b> <span class="muted">${r.grade || ""} ${r.race_type || ""}</span><br><span class="muted">締切 ${r.closed_at ? r.closed_at.replace("T"," ").slice(0,16) : "–"}${mins > 0 && !r.trifecta ? `（あと${mins}分）` : ""}${c ? ` · ${c.weather || ""} 風${c.wind_dir || ""}${c.wind_speed_m ?? "–"}m 波${c.wave_cm ?? "–"}cm` : ""}</span></div>`;
+  html += ratingCard(d, r, mins);
   if (r.trifecta) {
     const sc = p && p.scoring;
     html += `<div class="card judge ${sc && sc.hit ? "ok" : "ng"}"><h3 style="margin-top:0">結果</h3><b class="big">${r.trifecta}</b> <span class="muted">${r.kimarite || ""} 払戻 ${fmtN(r.trifecta_payout)}円${r.is_irregular ? "（返還等あり）" : ""}</span>
-      ${sc ? `<p style="margin:6px 0 0">${sc.valid ? (sc.hit ? "🎯 的中" : "外れ") : "無効: " + sc.invalid_reason} · 投資 ${fmtN(sc.stake_total)}円 / 払戻 ${fmtN(sc.payout_total)}円 / <b>${fmtY(sc.pnl)}</b>${p.decision === "skip" ? "<br><span class='muted'>見送りレース（仮に買っていた場合）</span>" : ""}</p>` : ""}</div>`;
+      ${sc ? `<p style="margin:6px 0 0">${sc.valid ? (sc.hit ? "🎯 的中" : "外れ") : "無効: " + sc.invalid_reason} · 投資 ${fmtN(sc.stake_total)}円 / 払戻 ${fmtN(sc.payout_total)}円 / <b>${fmtY(sc.pnl)}</b>${p.decision === "skip" ? "<br><span class='muted'>見送りレース（仮に買っていた場合）</span>" : ""}</p>` : ""}
+      ${pR && pR.scoring ? `<p class="muted" style="margin:4px 0 0">◎×加味版: ${pR.scoring.valid ? (pR.scoring.hit ? "🎯 的中" : "外れ") : "無効"} · ${fmtY(pR.scoring.pnl)}${pR.decision === "skip" ? "（見送り・仮想）" : ""}</p>` : ""}</div>`;
   }
   if (!p) {
-    html += `<div class="card"><p class="muted">${MODE_NAME[state.mode]}の予想はまだありません（締切4〜10分前に確定します）。</p>
+    html += `<div class="card"><p class="muted">${MODE_NAME[state.mode]}の予想はまだありません（締切2〜4分前に確定します）。</p>
       ${d.entries.map(e => `<div class="boat"><div class="lane l${e.lane}">${e.lane}</div><div><b>${e.name || ""}</b> <span class="muted">${e.klass || ""} 勝率${e.nat_win_rate ?? "–"} 当地${e.loc_win_rate ?? "–"} ST${e.avg_st ?? "–"} 機${e.motor_rate2 ?? "–"}%</span></div><div></div></div>`).join("")}</div>`;
     m.innerHTML = html; return;
   }
-  const f = p.flags || {}, est = f.odds_estimated, isPlace = p.role === "place" || (p.role === "ev1" && p.selections.every(s => s.kind === "fukusho"));
-  const total = p.selections.reduce((a, s) => a + s.stake, 0), won = r.trifecta;
-  const head = p.decision === "buy" ? `<b style="font-size:17px;color:var(--mode)">推奨</b> <span class="mono">${p.selections.length}点 ${fmtN(total)}円</span>` : `<b style="font-size:17px">見送り</b> <span class="muted">${hm(REASON[p.skip_reason] || p.skip_reason || "")}</span>`;
-  html += `<div class="card judge ${p.decision === "buy" ? "ok" : ""}"><div>${head}</div>
-    <p class="muted" style="margin:4px 0 0">${MODE_NAME[state.mode]} · ${p.created_at.replace("T"," ").slice(5,16)} 確定${est ? " · <span class='pill warn'>実オッズ未取得</span>" : ""}${p.role === "ana" && f.q_man != null ? ` · 市場の万舟確率 ${(f.q_man*100).toFixed(1)}%` : ""}${p.role === "katai" && f.min_payout ? ` · 当たれば${fmtN(f.min_payout)}円以上` : ""}${p.role === "ev1" && f.cal && f.cal.max_ev != null ? ` · 較正期待値の最大 ${(+f.cal.max_ev).toFixed(2)}` : ""}${p.role === "ev1" && f.rule ? ` · 規則: モーター${f.rule.motor_rank ?? "–"}位/展示${f.rule.ext_rank ?? "–"}位/${f.rule.stadium_ok ? "上位8場" : "対象外の場"}` : ""}</p></div>`;
-  if (p.selections.length && isPlace) {
-    const sc = p.scoring;
-    html += `<div class="card"><h3 style="margin-top:0">買い目${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${p.selections.map(s => { const ln = String(s.combo).replace(/\D/g, ""); const hit = sc && sc.valid && (sc.hit_kind === s.kind || (sc.hit && p.selections.length === 1)); return `<div class="boat"><div class="lane l${ln}">${ln}</div><div><b>${s.kind === "fukusho" ? "複勝" : "単勝"} ${ln}号艇</b><br><span class="muted">${p.role === "ev1" ? "実績規則: モーター2連率1位・展示タイム1位・上位8場" : `市場の${s.kind === "fukusho" ? "2着以内" : "1着"}確率 ${fmtP(s.prob)}`}</span></div><div class="right mono">${s.stake}円${sc && sc.valid ? `<br><small style="color:${hit ? "var(--ok)" : "var(--ink2)"}">${hit ? "🎯" : "外れ"}</small>` : ""}</div></div>`; }).join("")}</div>`;
-  } else if (p.selections.length) {
-    const sel3 = p.role === "ev1" ? p.selections.filter(s => s.kind === "ev3t") : p.selections;
-    if (p.role === "ev1" && p.selections.some(s => s.kind === "fukusho")) html += `<div class="card"><h3 style="margin-top:0">買い目（実績規則）</h3><div class="boat"><div class="lane l1">1</div><div><b>複勝 1号艇</b><br><span class="muted">モーター2連率1位・展示タイム1位・上位8場</span></div><div class="right mono">${p.selections.find(s => s.kind === "fukusho").stake}円</div></div></div>`;
-    html += `<div class="card"><h3 style="margin-top:0">買い目（フォーメーション順）${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${p.role === "ev1" ? `<p class="muted" style="margin:0 0 6px">${p.decision === "skip" ? "較正期待値が最大の1点（1.0未満なので買わない。仮想採点用）" : `較正期待値 ${(f.cal_ev || []).map(v => (+v).toFixed(2)).join(" / ")}（1.0以上）`}</p>` : ""}${formationView(sel3, won)}
-      <details><summary>一覧で見る</summary><div class="tbl"><table><tr><th>組</th><th class="n">金額</th><th class="n">オッズ</th></tr>${sel3.map(s => `<tr class="${won === s.combo ? "won" : ""}"><td class="mono">${s.combo}${won === s.combo ? " 🎯" : ""}</td><td class="n">${s.stake}円</td><td class="n">${s.odds_at_pred != null ? (+s.odds_at_pred).toFixed(1) : "–"}</td></tr>`).join("")}</table></div></details></div>`;
-  } else {
-    html += `<div class="card muted">この買い方では該当する買い目がありません（${hm(REASON[p.skip_reason] || p.skip_reason || "")}）。</div>`;
-  }
-  const rt = f.tags || [], st = f.solid_tags || [];
-  if (rt.length || st.length) html += `<div class="card"><h3 style="margin-top:0">このレースの特徴</h3>${tagPills(f)}<p class="muted" style="margin:8px 0 0">${state.mode === "ana" ? "荒れやすい条件の目安です（選定には使っていません。★は前向き検証中）。" : ""}${st.length ? "⚠ 過去データではこの種類のレースは堅く、穴向きではありません。" : ""}</p></div>`;
+  html += predCards(p, r, won, null);
+  if (pR) html += predCards(pR, r, won, "◎×を加味した予想");
+  const f = p.flags || {}, rt = f.tags || [], st = f.solid_tags || [];
+  if (rt.length || st.length || f.rough_market) html += `<div class="card"><h3 style="margin-top:0">このレースの特徴</h3>${tagPills(f)}<p class="muted" style="margin:8px 0 0">${f.rough_market ? "市場（3連単オッズ）は万舟の確率を高く見ています。荒れやすい目安で、選定には使っていません。" : ""}${st.length ? "⚠ 過去データではこの種類のレースは堅く、穴向きではありません。" : ""}</p></div>`;
   if (others.length) html += `<div class="card"><h3 style="margin-top:0">他のモード</h3>${others.map(o => `<p class="muted" style="margin:4px 0">${MODE_NAME[modeOf(o.role)]}：${o.decision === "buy" ? "<b>推奨</b>" : "見送り"} · ${o.selections.length}点 ${fmtN(o.selections.reduce((a, s) => a + s.stake, 0))}円${o.scoring && o.scoring.valid ? ` · ${o.scoring.hit ? "🎯 " : "外れ "}${fmtY(o.scoring.pnl)}` : ""}　<a href="#" onclick="setMode('${modeOf(o.role)}');return false">切替</a></p>`).join("")}</div>`;
   const be = p.boat_eval || {};
   html += `<details class="sec"><summary>6艇の評価</summary><div class="card">` + Object.keys(be).sort().map(k => { const b = be[k]; return `<div class="boat"><div class="lane l${k}">${k}</div><div><b>${b.name || ""}</b> <span class="muted">${b.klass || ""} 進入${b.course_pred}</span><br><span class="muted">勝率${b.nat_win_rate ?? "–"} 当地${b.loc_win_rate ?? "–"} ST${b.avg_st ?? "–"} 機${b.motor_rate2 ?? "–"}% 展示${b.exhibition_time ?? "–"}(${b.exhibition_rank ?? "–"}位) 展示ST${b.st_exh ?? "–"}</span></div><div class="right mono">${fmtP(b.p_win)}<br><small class="muted">${fmtP(b.p_top3)}</small></div></div>`; }).join("") + `<p class="muted">右の数字はモデルの1着確率／3着以内確率。</p></div></details>`;
   m.innerHTML = html;
+}
+// 1つの予想（推奨/見送り＋買い目）のカード。title があれば◎×加味版として出す
+function predCards(p, r, won, title) {
+  const f = p.flags || {}, est = f.odds_estimated, isPlace = p.role === "place" || (p.role.startsWith("ev1") && p.selections.every(s => s.kind === "fukusho"));
+  const total = p.selections.reduce((a, s) => a + s.stake, 0), sc = p.scoring;
+  const head = p.decision === "buy" ? `<b style="font-size:17px;color:var(--mode)">推奨</b> <span class="mono">${p.selections.length}点 ${fmtN(total)}円</span>` : `<b style="font-size:17px">見送り</b> <span class="muted">${hm(REASON[p.skip_reason] || p.skip_reason || "")}</span>`;
+  const ratedLine = f.rated ? ` · ◎ ${Object.entries(f.ratings || {}).filter(([, v]) => v > 0).map(([k]) => k + "号艇").join("・") || "なし"} / × ${Object.entries(f.ratings || {}).filter(([, v]) => v < 0).map(([k]) => k + "号艇").join("・") || "なし"}（効き ${f.rating_beta}）` : "";
+  let html = `<div class="card judge ${p.decision === "buy" ? "ok" : ""}">${title ? `<h3 style="margin-top:0">${title}</h3>` : ""}<div>${head}</div>
+    <p class="muted" style="margin:4px 0 0">${MODE_NAME[state.mode]} · ${p.created_at.replace("T"," ").slice(5,16)} 確定${est ? " · <span class='pill warn'>実オッズ未取得</span>" : ""}${p.role.startsWith("katai") && f.min_payout ? ` · 当たれば${fmtN(f.min_payout)}円以上` : ""}${p.role.startsWith("ev1") && f.cal && f.cal.max_ev != null ? ` · 較正期待値の最大 ${(+f.cal.max_ev).toFixed(2)}` : ""}${p.role.startsWith("ev1") && f.rule ? ` · 規則: モーター${f.rule.motor_rank ?? "–"}位/展示${f.rule.ext_rank ?? "–"}位/${f.rule.stadium_ok ? "上位8場" : "対象外の場"}` : ""}${ratedLine}</p></div>`;
+  if (p.selections.length && isPlace) {
+    html += `<div class="card"><h3 style="margin-top:0">買い目${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${p.selections.map(s => { const ln = String(s.combo).replace(/\D/g, ""); const hit = sc && sc.valid && (sc.hit_kind === s.kind || (sc.hit && p.selections.length === 1)); return `<div class="boat"><div class="lane l${ln}">${ln}</div><div><b>${s.kind === "fukusho" ? "複勝" : "単勝"} ${ln}号艇</b><br><span class="muted">${p.role.startsWith("ev1") ? "実績規則: モーター2連率1位・展示タイム1位・上位8場" : `市場の${s.kind === "fukusho" ? "2着以内" : "1着"}確率 ${fmtP(s.prob)}`}</span></div><div class="right mono">${s.stake}円${sc && sc.valid ? `<br><small style="color:${hit ? "var(--ok)" : "var(--ink2)"}">${hit ? "🎯" : "外れ"}</small>` : ""}</div></div>`; }).join("")}</div>`;
+  } else if (p.selections.length) {
+    const sel3 = p.role.startsWith("ev1") ? p.selections.filter(s => s.kind === "ev3t") : p.selections;
+    if (p.role.startsWith("ev1") && p.selections.some(s => s.kind === "fukusho")) html += `<div class="card"><h3 style="margin-top:0">買い目（実績規則）</h3><div class="boat"><div class="lane l1">1</div><div><b>複勝 1号艇</b><br><span class="muted">モーター2連率1位・展示タイム1位・上位8場</span></div><div class="right mono">${p.selections.find(s => s.kind === "fukusho").stake}円</div></div></div>`;
+    html += `<div class="card"><h3 style="margin-top:0">買い目（フォーメーション順）${p.decision === "skip" ? " <span class='pill skip'>見送り・参考</span>" : ""}</h3>${p.role.startsWith("ev1") ? `<p class="muted" style="margin:0 0 6px">${p.decision === "skip" ? "較正期待値が最大の1点（1.0未満なので買わない。仮想採点用）" : `較正期待値 ${(f.cal_ev || []).map(v => (+v).toFixed(2)).join(" / ")}（1.0以上）`}</p>` : ""}${formationView(sel3, won)}
+      <details><summary>一覧で見る</summary><div class="tbl"><table><tr><th>組</th><th class="n">金額</th><th class="n">オッズ</th></tr>${sel3.map(s => `<tr class="${won === s.combo ? "won" : ""}"><td class="mono">${s.combo}${won === s.combo ? " 🎯" : ""}</td><td class="n">${s.stake}円</td><td class="n">${s.odds_at_pred != null ? (+s.odds_at_pred).toFixed(1) : "–"}</td></tr>`).join("")}</table></div></details></div>`;
+  } else {
+    html += `<div class="card muted">この買い方では該当する買い目がありません（${hm(REASON[p.skip_reason] || p.skip_reason || "")}）。</div>`;
+  }
+  return html;
+}
+// ============================================================ 展示評価（◎×）の入力
+function ratingCard(d, r, mins) {
+  const rs = d.ratings || { lanes: {} }, lanes = rs.lanes || {};
+  const closed = !!r.trifecta || (r.closed_at && new Date(r.closed_at) < NOW());
+  const locked = rs.locked;            // 確定予想が既にある＝これからの入力は予想に反映されない
+  const usable = rs.usable_until ? rs.usable_until.slice(11, 16) : "–";
+  const status = locked
+    ? (rs.used ? `<span class="pill hit">確定予想に反映済み</span>` : `<span class="pill warn">確定後の入力（予想には未反映・記録のみ）</span>`)
+    : (closed ? `<span class="pill">締切済み</span>` : `<span class="pill">${usable} までの入力が確定予想に反映されます</span>`);
+  const entries = (d.entries && d.entries.length) ? d.entries : [1, 2, 3, 4, 5, 6].map(l => ({ lane: l }));   // 出走表が未取得でも6艇分は出す
+  const row = e => { const v = (lanes[String(e.lane)] || {}).rating || 0;
+    return `<div class="boat"><div class="lane l${e.lane}">${e.lane}</div><div><b>${e.name || ""}</b><br><span class="muted">${e.klass || ""} 機${e.motor_rate2 ?? "–"}%</span></div>
+      <div class="right" style="white-space:nowrap"><button class="btn ghost rate ${v > 0 ? "on" : ""}" ${closed ? "disabled" : ""} onclick="rate(${r.id},${e.lane},${v > 0 ? 0 : 1})">◎</button> <button class="btn ghost rate ${v < 0 ? "onx" : ""}" ${closed ? "disabled" : ""} onclick="rate(${r.id},${e.lane},${v < 0 ? 0 : -1})">×</button></div></div>`; };
+  return `<details class="sec" ${Object.keys(lanes).length || (!closed && mins != null && mins <= 20) ? "open" : ""}><summary>展示を見た評価（◎ 良さそう / × ダメそう）</summary><div class="card">
+    <p class="muted" style="margin-top:0">${status}</p>${entries.map(row).join("")}
+    <p class="muted" style="margin:8px 0 0">タップで保存されます（追記専用・後から消えません）。評価があるレースは、4モードのうち堅い・本命・期待値1以上について「評価あり版」を並べて記録し、結果で対の比較をします。</p></div></details>`;
+}
+async function rate(raceId, lane, v) {
+  try { await api("/api/ratings", { method: "POST", body: JSON.stringify({ race_id: raceId, ratings: { [String(lane)]: v } }) }); render(); }
+  catch (e) { alert("保存できませんでした: " + e.message); }
 }
 // ============================================================ 成績
 async function renderStats(m) {
@@ -402,20 +449,20 @@ async function renderSettings(m) {
   const dl = (mode, label) => `<a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px;margin:4px 6px 4px 0" href="/api/export.csv?mode=${mode}" download>${label}</a>`;
   m.innerHTML = `${statusSection(sys)}
     <details class="sec" open><summary>各モードの条件（値は versioned settings として記録・自動では変わりません）</summary><div class="card">
-      <h3 style="margin-top:0">期待値1以上</h3>
+      <h3 style="margin-top:0">展示評価（◎×）</h3>
+      ${num("r_beta", "評価の効き（beta）", mp.rating_beta, 0.05)}
+      <p class="muted">◎の艇の1着の強さを e^beta 倍、×の艇を e^-beta 倍にして120通りを作り直します（2着は半分、3着は1/4の重み）。0.3 なら ◎ ×1.35 / × ×0.74。
+      ホームの「◎×の検証」に出る推定値を見て、必要ならここを変えてください。自動では変わりません。</p>
+      <h3>期待値1以上</h3>
       <div class="two">${num("e_min", "較正期待値の下限", mp.ev1_ev_min, 0.05)}${num("e_ratio", "締切前→確定のオッズ下落率", mp.ev1_odds_ratio, 0.01)}</div>
       <div class="two">${num("e_pstake", "複勝 1点（円）", mp.ev1_place_stake, 100)}${num("e_3stake", "3連単 1点（円）", mp.ev1_stake3t, 100)}</div>
       ${num("e_pts", "3連単の最大点数", mp.ev1_points_max, 1)}
       <p class="muted">実績規則（1号艇のモーター2連率1位＋展示タイム1位＋上位8場＝江戸川・大村・津・徳山・びわこ・尼崎・宮島・福岡）は固定です。較正は p ∝ モデル^0.15 × 市場^0.926（市場が主）。下落率は締切2〜4分前から確定までに当たった目が下がる実測（×0.906）です。</p>
-      <h3>3連単（穴狙い）<span class="muted" style="font-weight:400">・参考</span></h3>
-      <div class="two">${num("ana_q", "市場の万舟確率の下限", mp.ana_qman_min, 0.005)}${num("ana_stake", "1点（円）", mp.ana_stake, 100)}</div>
-      <div class="two">${num("ana_lo", "人気 何番目から", mp.ana_rank_lo, 1)}${num("ana_hi", "人気 何番目まで", mp.ana_rank_hi, 1)}</div>
-      <h3>3連単（堅い予想）</h3>
-      <div class="two">${num("k_budget", "1レース予算＝保証する最低払戻（円）", mp.katai_budget, 500)}${num("k_conf", "信頼度の下限", mp.katai_confidence_min, 0.01)}</div>
-      <div class="two">${num("k_max", "本線の最大点数", mp.katai_points_max, 1)}${num("k_min", "成立に必要な最小点数", mp.katai_points_min, 1)}</div>
+      <h3>市場の荒れ予想の目安</h3>
+      ${num("ana_q", "「市場は荒れ予想」と表示する万舟確率の下限", mp.ana_qman_min, 0.005)}
       <h3>3連単（堅い予想・上位厚め）</h3>
       <div class="two">${num("kt_points", "点数（固定）", mp.katai_t_points, 1)}${num("kt_total", "合計（円・固定）", mp.katai_t_total, 500)}</div>
-      <h3>3連単（本命10点・${mp.honmei_multiple}倍保証）</h3>
+      <h3>3連単（本命5本・${mp.honmei_multiple}倍保証）</h3>
       <div class="two">${num("h_mult", "当たったときの最低倍率", mp.honmei_multiple, 0.1)}${num("h_cap", "1レースの支出上限（円）", mp.honmei_cap, 1000)}</div>
       <div class="two">${num("h_slots", "1日に買う本数（枠）", mp.honmei_slots, 1)}${num("h_pts", "点数（固定）", mp.honmei_points, 1)}</div>
       ${num("h_rate", "残り本数の見積もりに使う成立率", mp.honmei_feasible_rate, 0.01)}
@@ -429,14 +476,14 @@ async function renderSettings(m) {
       <p class="muted">しきい値は確定オッズで決めた値です。締切前オッズでは市場の確信度が低めに出るので、記録が貯まったら締切前基準で見直します。</p>
       <p><button class="btn" id="save" style="width:100%">保存（新しい設定版として記録）</button></p></div></details>
     <details class="sec" open><summary>データの書き出し（CSV）</summary><div class="card"><p class="muted" style="margin-top:0">採点済みの記録。分析を依頼するときはこのファイルを渡してください。</p>
-      ${dl("ev1", "期待値1以上")}${dl("ana", "3連単（穴狙い）")}${dl("katai", "3連単（堅い・保証つき）")}${dl("katai_t", "3連単（堅い・上位厚め）")}${dl("honmei", MODE_NAME.honmei)}${dl("place", "複勝・単勝")}
-      <p class="muted" style="margin:10px 0 4px">旧モード（画面からは外しましたが記録は続いています）</p>${dl("focused", "絞り込み型（旧）")}${dl("std", "15点固定（旧）")}</div></details>
+      ${dl("ev1", "期待値1以上")}${dl("katai_t", "3連単（堅い・上位厚め）")}${dl("honmei", MODE_NAME.honmei)}${dl("place", "複勝・単勝")}
+      <p class="muted" style="margin:10px 0 4px">◎×を加味した版（評価を入れたレースだけ）と、評価そのもの</p>${dl("ev1R", "期待値1以上・◎×")}${dl("katai_tR", "堅い・◎×")}${dl("honmeiR", "本命・◎×")}<a class="btn ghost" style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--acc);border-radius:8px;margin:4px 6px 4px 0" href="/api/export_ratings.csv" download>評価の一覧</a>
+      <p class="muted" style="margin:10px 0 4px">旧モード（記録は止めました。過去分の取り出し用）</p>${dl("ana", "3連単（穴狙い・旧）")}${dl("katai", "3連単（堅い・保証つき・旧）")}${dl("focused", "絞り込み型（旧）")}${dl("std", "15点固定（旧）")}</div></details>
     <details class="sec"><summary>このツールについて</summary><div class="card muted">自動購入はしません。設定は自動で変わりません。予想は締切前に保存され、あとから書き換えられません（追記専用）。見送りレースも仮想で採点します。<br>過去の研究（reports/）: 単勝・複勝プールの歪み、買い方の自動研究、絞り込み型などは記録・API を残したまま画面から外しています。</div></details>`;
   $("#save").onclick = async () => {
     const g = id => +$("#" + id).value;
-    const modes = Object.assign({}, mp, { ev1_ev_min: g("e_min"), ev1_odds_ratio: g("e_ratio"), ev1_place_stake: g("e_pstake"), ev1_stake3t: g("e_3stake"), ev1_points_max: g("e_pts"),
-      ana_qman_min: g("ana_q"), ana_stake: g("ana_stake"), ana_rank_lo: g("ana_lo"), ana_rank_hi: g("ana_hi"),
-      katai_budget: g("k_budget"), katai_confidence_min: g("k_conf"), katai_points_max: g("k_max"), katai_points_min: g("k_min"),
+    const modes = Object.assign({}, mp, { rating_beta: g("r_beta"), ev1_ev_min: g("e_min"), ev1_odds_ratio: g("e_ratio"), ev1_place_stake: g("e_pstake"), ev1_stake3t: g("e_3stake"), ev1_points_max: g("e_pts"),
+      ana_qman_min: g("ana_q"),
       katai_t_points: g("kt_points"), katai_t_total: g("kt_total"),
       honmei_multiple: g("h_mult"), honmei_cap: g("h_cap"), honmei_slots: g("h_slots"), honmei_points: g("h_pts"),
       honmei_feasible_rate: g("h_rate"),

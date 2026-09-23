@@ -363,3 +363,19 @@ class PoolGapPick(Base):
     params_version: Mapped[str] = mapped_column(String(16))
     params: Mapped[dict | None] = mapped_column(JSON)
     __table_args__ = (UniqueConstraint("race_id", "bet_type", "lane", "stage"),)
+
+
+class ExhibitionRating(Base):
+    """ユーザーが展示航走を見て付けた艇の評価（追記専用）。
+
+    rating: +1=◎（良さそう）、-1=×（ダメそう）、0=無印に戻す。同じ (race, lane) に複数行あれば
+    **created_at が最新の行が有効**。確定予想は「その時点までに入っていた行」だけを使い、
+    どの評価を使ったかを predictions.flags.ratings に写す。確定後の入力は残るが予想には使われない。
+    """
+    __tablename__ = "exhibition_ratings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("races.id"), index=True)
+    lane: Mapped[int] = mapped_column(Integer)          # 1..6
+    rating: Mapped[int] = mapped_column(Integer)        # +1 / -1 / 0
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    source: Mapped[str] = mapped_column(String(16), default="user")

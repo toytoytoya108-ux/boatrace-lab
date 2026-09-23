@@ -25,16 +25,16 @@ from boatlab.features.history import HistoryFrames, load_history
 from boatlab.ingest.base import Fetcher, NotFound
 from boatlab.ingest.parsers import parse_v1_day
 from boatlab.model.pipeline import Predictor
-from boatlab.model.modes import (HONMEI_MULTIPLE, MODES_VERSION, ModeParams, honmei_grid_for, market_probs,
-                                 race_tags, select_ana, select_honmei,
-                                 select_ev1, select_katai, select_katai_top, select_place)
+from boatlab.model.modes import (HONMEI_MULTIPLE, MODES_VERSION, Q_MAN, ModeParams, adjust_probs_for_ratings, honmei_grid_for,
+                                 market_probs, race_tags, select_ana, select_ev1, select_honmei, select_katai_top,
+                                 select_place)
 from boatlab.model.selection import FocusedParams, SelectionParams, select_focused
 from boatlab.model.trifecta import PERM_LABELS as _PL
 from boatlab.model.staking import StakingParams
 from boatlab.model.trifecta import PERM_LABELS, combo_index
 from boatlab.store.db import session_scope
 from boatlab.store.models import (
-    ModelVersion, OddsSnapshot, PoolGapPick, Prediction, PredictionSelection, Race, Result, Scoring,
+    ExhibitionRating, ModelVersion, OddsSnapshot, PoolGapPick, Prediction, PredictionSelection, Race, Result, Scoring,
     SettingsVersion,
 )
 from boatlab.store.writer import write_bundle
@@ -173,7 +173,35 @@ def modes_from_settings(row: SettingsVersion) -> ModeParams:
     return prm
 
 
-MODE_ROLES = ("ana", "katai", "katai_t", "honmei", "place", "ev1")
+# 2026-09-23: 4モード化。穴狙い(ana)・堅い保証つき(katai) は記録を止めた（選定関数とテストは残す）。
+MODE_ROLES = ("katai_t", "honmei", "place", "ev1")
+# 展示評価（◎×）を加味した版を並べて記録する対象。role は末尾に "R"（例: katai_tR）。複勝は市場だけで決めるので対象外。
+RATED_ROLES = ("katai_t", "honmei", "ev1")
+RATED_SUFFIX = "R"
+
+
+def load_ratings(s, race_id: int, before: datetime) -> dict[int, int]:
+    """その時点までに入力されていた最新の評価（lane → +1/-1）。0（無印に戻した）は除く。"""
+    rows = s.execute(select(ExhibitionRating).where(ExhibitionRating.race_id == race_id,
+                                                    ExhibitionRating.created_at <= before)
+                     .order_by(ExhibitionRating.created_at)).scalars().all()
+    latest: dict[int, int] = {}
+    for x in rows:
+        latest[int(x.lane)] = int(x.rating)
+    return {k: v for k, v in latest.items() if v}
+
+
+def rated_output(o: dict, ratings: dict[int, int], beta: float) -> dict:
+    """評価を加味した確率で o を作り直す。本線10点＋穴5点の並びも作り直す（堅い・本命はこの並びを使う）。"""
+    parr = np.array([float(o["probs"][k]) for k in _PL])
+    q = adjust_probs_for_ratings(parr, ratings, beta)
+    order = np.argsort(-q)
+    o2 = dict(o)
+    o2["probs"] = {_PL[i]: float(q[i]) for i in range(120)}
+    o2["selections"] = [dict(combo=_PL[int(order[k])], rank=k + 1, kind=("main" if k < 10 else "hole"), stake=100,
+                             prob=float(q[order[k]]), odds=o["odds_used"].get(_PL[int(order[k])]), ev=None) for k in range(15)]
+    o2["flags"] = dict(o["flags"])
+    return o2
 
 
 def staking_from_settings(row: SettingsVersion) -> StakingParams:
@@ -208,7 +236,8 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
         modes = modes_from_settings(srow)
         done_m = {mr: {rid for (rid,) in s.execute(select(Prediction.race_id).where(
             Prediction.model_version == predictor.version, Prediction.stage == stage,
-            Prediction.role == (mr if role == "active" else f"{role}_{mr}")))} for mr in MODE_ROLES}
+            Prediction.role == (mr if role == "active" else f"{role}_{mr}")))}
+                  for mr in MODE_ROLES + tuple(x + RATED_SUFFIX for x in RATED_ROLES)}
     targets = []
     for r in races:
         if r.id in done or r.closed_at is None:
@@ -291,13 +320,21 @@ def predict_pending(predictor: Predictor, stage: str, role: str = "active", d: d
                                               stake=int(stk), prob=float(parr[j]),
                                               odds_at_pred=(None if not np.isfinite(oarr[j]) else float(oarr[j])),
                                               odds_source=o["odds_source"], ev=float(f.ev[j])))
-            # ---- 3モード（穴・堅い・複勝単勝）。確定予想のみ。市場ベースなので推定オッズでは動かさない
+            # ---- 4モード（堅い厚め・本命・複勝単勝・期待値1以上）。確定予想のみ。市場ベースのものは推定オッズでは動かさない
             if stage == "final" and role == "active":
                 _record_modes(s, o, r, predictor.version, settings_id, now, odds_by_race, modes, done_m)
+                # ---- 展示評価（◎×）があれば、加味した版を role 末尾 R で並べて記録する（対で採点するため）
+                ratings = load_ratings(s, o["race_id"], now_jst())
+                if ratings:
+                    o_r = rated_output(o, ratings, float(modes.rating_beta))
+                    _record_modes(s, o_r, r, predictor.version, settings_id, now, odds_by_race, modes, done_m,
+                                  suffix=RATED_SUFFIX, only=RATED_ROLES,
+                                  extra_flags={"rated": True, "ratings": {str(k): v for k, v in sorted(ratings.items())},
+                                               "rating_beta": float(modes.rating_beta)})
     return {"predicted": n, "stage": stage, "date": str(d)}
 
 
-def honmei_context(s, r: Race, prm: ModeParams) -> tuple[int, int]:
+def honmei_context(s, r: Race, prm: ModeParams, role: str = "honmei") -> tuple[int, int]:
     """本命10点モードの（残り枠、この先に残る成立見込みレース数）。
 
     **先読みは一切使わない。** 分かっているのは「今日ここまでに何本買ったか」と
@@ -305,7 +342,7 @@ def honmei_context(s, r: Race, prm: ModeParams) -> tuple[int, int]:
     過去の成立率（honmei_feasible_rate）を掛けて見積もる（`online5.md` R3）。"""
     bought = s.execute(
         select(func.count(Prediction.id)).join(Race, Race.id == Prediction.race_id).where(
-            Race.race_date == r.race_date, Prediction.role == "honmei", Prediction.decision == "buy")
+            Race.race_date == r.race_date, Prediction.role == role, Prediction.decision == "buy")
     ).scalar() or 0
     remaining = s.execute(
         select(func.count(Race.id)).where(
@@ -318,30 +355,39 @@ def honmei_context(s, r: Race, prm: ModeParams) -> tuple[int, int]:
 
 
 def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now: datetime,
-                  odds_by_race: dict, prm: ModeParams, done_m: dict) -> None:
-    """3モードを role='ana'/'katai'/'place' として predictions に追記する（追記専用・自動購入なし）。
+                  odds_by_race: dict, prm: ModeParams, done_m: dict, suffix: str = "", only=None,
+                  extra_flags: dict | None = None) -> None:
+    """4モードを role='katai_t'/'honmei'/'place'/'ev1' として predictions に追記する（追記専用・自動購入なし）。
 
-    穴・複勝単勝は市場のオッズだけで選ぶので、公式オッズが無い（推定）ときは skip として記録する。
-    堅いは本体の本線の並び（モデル確率順）＋保証つき配分。"""
+    複勝単勝は市場のオッズだけで選ぶので、公式オッズが無い（推定）ときは skip として記録する。
+    suffix/only/extra_flags は展示評価を加味した版（role 末尾 R）用。flags.mode は常に元のモード名、
+    flags.role に実際の role を入れる（採点はモード名で分岐する）。"""
     rid = o["race_id"]
+    only = tuple(only) if only else MODE_ROLES
+    extra_flags = extra_flags or {}
     real = not bool(o["flags"].get("odds_estimated"))
     oarr = np.array([np.nan if o["odds_used"][k] is None else float(o["odds_used"][k]) for k in _PL])
     main_idx = [combo_index(x["combo"]) for x in sorted(o["selections"], key=lambda x: x["rank"]) if x["kind"] == "main"]
     # 荒れ理由タグ・堅い注意タグ（選定には使わない。表示と前向き検証のため。市場ベースのタグは実オッズのときだけ）
-    tags = race_tags(o["boat_eval"], r.stadium_code, getattr(r, "title", None), getattr(r, "race_type", None),
-                     market_probs(oarr) if real else None)
+    q_mkt = market_probs(oarr) if real else None
+    tags = race_tags(o["boat_eval"], r.stadium_code, getattr(r, "title", None), getattr(r, "race_type", None), q_mkt)
+    # 穴狙いの記録は止めたが「市場が荒れると見ているか」（万舟確率）は全モードに残す（2026-09-23）
+    q_man = float(np.where(q_mkt <= Q_MAN, q_mkt, 0.0).sum()) if q_mkt is not None else None
+    rough_market = bool(q_man is not None and q_man >= float(prm.ana_qman_min))
     common = dict(race_id=rid, model_version=model_version, settings_id=settings_id, stage="final",
                   created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at, features_used=None,
                   odds_snapshot_id=odds_by_race.get(rid, (None,))[0], completeness=o["completeness"],
                   missing_fields=None, boat_eval=o["boat_eval"], probs=o["probs"], odds_used=o["odds_used"],
                   ev=o["ev"], confidence=o["confidence"], rationale=o["rationale"], input_hash=o["input_hash"])
 
-    def _add(role: str, fired: bool, reason: str | None, flags: dict, sels: list[dict], text: str, er: float = 0.0):
+    def _add(mode: str, fired: bool, reason: str | None, flags: dict, sels: list[dict], text: str, er: float = 0.0):
+        role = mode + suffix
         p = Prediction(**common, role=role, expected_return=er, decision=("buy" if fired else "skip"),
                        skip_reason=(None if fired else reason),
-                       flags={**o["flags"], "mode": role, "modes_version": MODES_VERSION, "params": prm.to_dict(),
-                              "tags": tags["rough"], "solid_tags": tags["solid"], **flags},
-                       rationale_text=text)
+                       flags={**o["flags"], "mode": mode, "role": role, "modes_version": MODES_VERSION, "params": prm.to_dict(),
+                              "tags": tags["rough"], "solid_tags": tags["solid"], "q_man": q_man, "rough_market": rough_market,
+                              **extra_flags, **flags},
+                       rationale_text=(("◎×加味: " if suffix else "") + text))
         s.add(p)
         s.flush()
         for k, x in enumerate(sels):
@@ -349,24 +395,7 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
                                       stake=int(x["stake"]), prob=x.get("prob"), odds_at_pred=x.get("odds"),
                                       odds_source=o["odds_source"], ev=None))
 
-    if rid not in done_m["ana"]:
-        a = select_ana(oarr, prm) if real else dict(fired=False, reason="odds_estimated", points=[], stakes=[])
-        _add("ana", a["fired"], a["reason"],
-             dict(q_man=a.get("q_man"), n_points=len(a["points"]), stake_total=int(sum(a["stakes"]))),
-             [dict(combo=_PL[j], kind="ana", stake=st, prob=q, odds=od)
-              for j, st, q, od in zip(a["points"], a["stakes"], a.get("q", []), a.get("odds", []))],
-             (f"穴狙い: 市場の万舟確率 {a.get('q_man', 0):.3f}・人気{prm.ana_rank_lo}〜{prm.ana_rank_hi}番目 {len(a['points'])}点"
-              if a["fired"] else f"穴狙い: 見送り（{a['reason']}）"))
-    if rid not in done_m["katai"]:
-        k = select_katai(main_idx, oarr, float(o["confidence"]), prm) if real else \
-            dict(fired=False, reason="odds_estimated", points=[], stakes=[])
-        _add("katai", k["fired"], k["reason"],
-             dict(n_points=len(k["points"]), stake_total=int(k.get("stake_total", 0)), min_payout=k.get("min_payout")),
-             [dict(combo=_PL[j], kind="katai", stake=st, prob=float(o["probs"][_PL[j]]), odds=od)
-              for j, st, od in zip(k["points"], k["stakes"], k.get("odds", []))],
-             (f"堅い予想: 本線{len(k['points'])}点・{k.get('stake_total', 0)}円（当たれば{k.get('min_payout')}円以上）"
-              if k["fired"] else f"堅い予想: 見送り（{k['reason']}）"))
-    if rid not in done_m["katai_t"]:
+    if "katai_t" in only and rid not in done_m["katai_t" + suffix]:
         kt = select_katai_top(main_idx, oarr, float(o["confidence"]), prm)
         _add("katai_t", kt["fired"], kt["reason"],
              dict(n_points=len(kt["points"]), stake_total=int(kt.get("stake_total", 0))),
@@ -374,9 +403,9 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
               for j, st, od in zip(kt["points"], kt["stakes"], kt.get("odds", []))],
              (f"堅い予想（上位厚め）: 本線{len(kt['points'])}点・{kt.get('stake_total', 0)}円（1点目に厚く）"
               if kt["fired"] else f"堅い予想（上位厚め）: 見送り（{kt['reason']}）"))
-    if rid not in done_m["honmei"]:
+    if "honmei" in only and rid not in done_m["honmei" + suffix]:
         if real:
-            slots_left, races_left = honmei_context(s, r, prm)
+            slots_left, races_left = honmei_context(s, r, prm, role="honmei" + suffix)
             hm = select_honmei(main_idx, oarr, o["probs"], slots_left, races_left, prm)
         else:
             hm = dict(fired=False, reason="odds_estimated", points=[], stakes=[])
@@ -389,7 +418,7 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
              (f"本命{len(hm['points'])}点: {hm.get('stake_total', 0)}円（当たれば{hm.get('min_payout')}円以上＝"
               f"×{hm.get('mult', 0):.2f}）／確率合計{hm.get('p10', 0):.3f} ≥ しきい値{hm.get('threshold') or 0:.3f}"
               if hm["fired"] else f"本命10点: 見送り（{hm['reason']}）"))
-    if rid not in done_m["place"]:
+    if "place" in only and rid not in done_m["place" + suffix]:
         pl = select_place(oarr, prm) if real else dict(fukusho=dict(fired=False, reason="odds_estimated"),
                                                       tansho=dict(fired=False, reason="odds_estimated"))
         fk, tn = pl["fukusho"], pl["tansho"]
@@ -405,7 +434,7 @@ def _record_modes(s, o: dict, r: Race, model_version: str, settings_id: int, now
                  ([f"複勝 {fk['lane']}号艇（市場の2着以内確率 {fk['q']:.3f}）"] if fk["fired"] else []) +
                  ([f"単勝 {tn['lane']}号艇（市場の1着確率 {tn['q']:.3f}）"] if tn["fired"] else []))
               if fired else f"複勝・単勝: 見送り（{fk.get('reason') or 'q_low'}）"))
-    if rid not in done_m["ev1"]:
+    if "ev1" in only and rid not in done_m["ev1" + suffix]:
         # 期待値1以上: 実績規則（オッズ不要）＋較正期待値（実オッズのときだけ）
         parr = np.array([float(o["probs"][k]) for k in _PL])
         e1 = select_ev1(o["boat_eval"], r.stadium_code, oarr if real else None, parr, prm)
@@ -595,98 +624,3 @@ def record_pool_gap(odds3t: dict, win_odds: dict | None, place_odds: dict | None
 
 
 # ---------------------------------------------------------------- 直前版（締切2〜4分前のオッズで穴・複勝単勝を再選定）
-def record_late_modes(race_id: int, odds3t: dict, now: datetime, minutes_before: float, odds_snapshot_id: int | None = None) -> int:
-    """締切2〜4分前に取り直した3連単オッズで、穴・複勝単勝・本命10点を
-    role='ana_late'/'place_late'/'hon_late' として追記する。
-
-    **表示には使わない。** 目的は「締切8分前の帯 → 3分前の帯 → 確定の帯」がどれだけ入れ替わるかと、
-    直前版の仮想回収率を測ること（2026-09-13 開始）。本体の確定予想（role='active'）が無いレースは何もしない。
-    採点は flags.mode（'ana'/'place'）で既存の経路に乗る。"""
-    with session_scope() as s:
-        base = s.execute(select(Prediction).where(Prediction.race_id == race_id, Prediction.stage == "final",
-                                                 Prediction.role == "active").order_by(Prediction.id.desc())).scalars().first()
-        if base is None:
-            return 0
-        done = {rl for (rl,) in s.execute(select(Prediction.role).where(
-            Prediction.race_id == race_id, Prediction.stage == "final",
-            Prediction.role.in_(("ana_late", "place_late", "hon_late"))))}
-        early = {p.role: p for p in s.execute(select(Prediction).where(
-            Prediction.race_id == race_id, Prediction.stage == "final",
-            Prediction.role.in_(("ana", "place", "honmei")))).scalars()}
-        early_sel = {rl: [x.combo for x in s.execute(select(PredictionSelection).where(
-            PredictionSelection.prediction_id == p.id)).scalars()] for rl, p in early.items()}
-        r = s.get(Race, race_id)
-        srow = _settings_row(s)
-        prm = modes_from_settings(srow)
-        oarr = np.array([np.nan if odds3t.get(k) is None else float(odds3t[k]) for k in _PL])
-        real = int(np.isfinite(oarr).sum()) >= 100
-        tags = race_tags(base.boat_eval, r.stadium_code, getattr(r, "title", None), getattr(r, "race_type", None),
-                         market_probs(oarr) if real else None)
-        common = dict(race_id=race_id, model_version=base.model_version, settings_id=srow.id, stage="final",
-                      created_at=now_jst(), asof_ts=now, post_time_at_pred=r.closed_at, features_used=None,
-                      odds_snapshot_id=odds_snapshot_id, completeness=base.completeness, missing_fields=None,
-                      boat_eval=base.boat_eval, probs=base.probs,
-                      odds_used={k: (None if not np.isfinite(v) else float(v)) for k, v in zip(_PL, oarr)},
-                      ev=base.ev, confidence=base.confidence, rationale=base.rationale, input_hash=base.input_hash)
-        n = 0
-
-        def _add(role, mode, fired, reason, flags, sels, text):
-            p = Prediction(**common, role=role, expected_return=0.0, decision=("buy" if fired else "skip"),
-                           skip_reason=(None if fired else reason),
-                           flags={"odds_estimated": not real, "mode": mode, "late": True, "minutes_before": round(minutes_before, 1),
-                                  "modes_version": MODES_VERSION, "params": prm.to_dict(), "tags": tags["rough"],
-                                  "solid_tags": tags["solid"], **flags},
-                           rationale_text=text)
-            s.add(p); s.flush()
-            for k, x in enumerate(sels):
-                s.add(PredictionSelection(prediction_id=p.id, combo=x["combo"], rank=k + 1, kind=x["kind"], stake=int(x["stake"]),
-                                          prob=x.get("prob"), odds_at_pred=x.get("odds"), odds_source=("real" if real else "estimated"), ev=None))
-
-        if "ana_late" not in done:
-            a = select_ana(oarr, prm) if real else dict(fired=False, reason="odds_estimated", points=[], stakes=[])
-            combos = [_PL[j] for j in a["points"]]
-            ov = len(set(combos) & set(early_sel.get("ana", []))) if combos else None
-            _add("ana_late", "ana", a["fired"], a["reason"],
-                 dict(q_man=a.get("q_man"), n_points=len(combos), stake_total=int(sum(a["stakes"])), overlap_with_early=ov,
-                      early_decision=(early["ana"].decision if "ana" in early else None)),
-                 [dict(combo=c0, kind="ana", stake=st, prob=q, odds=od)
-                  for c0, st, q, od in zip(combos, a["stakes"], a.get("q", []), a.get("odds", []))],
-                 f"穴狙い（直前版 {minutes_before:.1f}分前）: " + (f"人気{prm.ana_rank_lo}〜{prm.ana_rank_hi} {len(combos)}点、8分前との重なり {ov}" if a["fired"] else f"見送り（{a['reason']}）"))
-            n += 1
-        if "place_late" not in done:
-            pl = select_place(oarr, prm) if real else dict(fukusho=dict(fired=False, reason="odds_estimated"), tansho=dict(fired=False, reason="odds_estimated"))
-            fk, tn = pl["fukusho"], pl["tansho"]
-            fired = bool(fk["fired"] or tn["fired"])
-            sels = ([dict(combo=f"複{fk['lane']}", kind="fukusho", stake=fk["stake"], prob=fk["q"], odds=None)] if (fk["fired"] or not fired) and "lane" in fk else []) + \
-                   ([dict(combo=f"単{tn['lane']}", kind="tansho", stake=tn["stake"], prob=tn["q"], odds=None)] if (tn["fired"] or not fired) and "lane" in tn else [])
-            _add("place_late", "place", fired, (None if fired else (fk.get("reason") or "q_low")),
-                 dict(fukusho=fk, tansho=tn, n_points=len(sels), stake_total=int(sum(x["stake"] for x in sels)),
-                      early_decision=(early["place"].decision if "place" in early else None)),
-                 sels, f"複勝・単勝（直前版 {minutes_before:.1f}分前）: " + ("発火" if fired else "見送り"))
-            n += 1
-        if "hon_late" not in done:
-            # 本命10点は「締切直前でも×1.5が保たれるか」を測るための記録。
-            # 買う/買わないは8分前の判断をそのまま引き継ぎ（枠の取り合いを二重に走らせない）、
-            # 変わるのはオッズだけ。倍率が1.5を割るなら、実運用は余裕を見た倍率で組む必要がある。
-            hp = early.get("honmei")
-            pts = [combo_index(c0) for c0 in early_sel.get("honmei", [])]
-            if not pts:
-                pr = base.probs or {}
-                pts = [combo_index(c0) for c0 in sorted(pr, key=lambda k: -float(pr[k] or 0.0))[:prm.honmei_points]]
-            hm = select_honmei(pts, oarr, base.probs, 5, 1, prm) if real else \
-                dict(fired=False, reason="odds_estimated", points=[], stakes=[])
-            fired_h = bool(hp is not None and hp.decision == "buy" and hm.get("reason") != "no_guarantee"
-                           and hm.get("points"))
-            _add("hon_late", "honmei", fired_h, (hm.get("reason") or "early_skip"),
-                 dict(n_points=len(hm["points"]), stake_total=int(hm.get("stake_total", 0)),
-                      min_payout=hm.get("min_payout"), mult=hm.get("mult"),
-                      early_mult=((hp.flags or {}).get("mult") if hp is not None else None),
-                      early_stake=((hp.flags or {}).get("stake_total") if hp is not None else None),
-                      early_decision=(hp.decision if hp is not None else None)),
-                 [dict(combo=_PL[j], kind="honmei", stake=st, prob=float((base.probs or {}).get(_PL[j]) or 0.0), odds=od)
-                  for j, st, od in zip(hm["points"], hm["stakes"], hm.get("odds", []))] if fired_h else [],
-                 f"本命10点（直前版 {minutes_before:.1f}分前）: " +
-                 (f"{hm.get('stake_total', 0)}円・当たれば{hm.get('min_payout')}円以上（×{hm.get('mult', 0):.2f}）"
-                  if fired_h else f"記録のみ（{hm.get('reason') or 'early_skip'}）"))
-            n += 1
-        return n

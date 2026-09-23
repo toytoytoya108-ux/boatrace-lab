@@ -56,16 +56,17 @@ def test_modes_endpoint(client):
     r = tc.get("/api/modes", headers=h)
     assert r.status_code == 200, r.text
     j = r.json()
-    assert set(j["modes"]) == {"ev1", "ana", "katai", "katai_t", "honmei", "place"} and j["modes"]["ev1"]["measured"]["ev1"]["roi"] > 1.0 and j["params"]["fukusho_q_min"] == 0.90
+    assert set(j["modes"]) == {"ev1", "katai_t", "honmei", "place"} and j["modes"]["ev1"]["measured"]["ev1"]["roi"] > 1.0 and j["params"]["fukusho_q_min"] == 0.90
+    assert "rated" in j and j["rated"]["katai_t"]["n"] == 0 and j["rated"]["beta_setting"] == 0.3
     pl = j["modes"]["place"]
     assert pl["today"]["n_fired"] == 1 and pl["today"]["hits"] == 1 and pl["today"]["pnl"] == 10
     assert pl["cumulative"]["n"] == 1 and pl["cumulative"]["roi"] == pytest.approx(1.1)
     assert "fukusho" in pl["measured"] and pl["expected_monthly_loss"]["fukusho"] >= 0
-    assert j["modes"]["ana"]["today"]["n_fired"] == 0 and j["modes"]["ana"]["today"]["n_recorded"] == 1
+    assert "ana" not in j["modes"]                      # 旧モードは /api/modes に出ない（CSV の取り出しだけ残る）
     # /api/today はモードごとに role を切り替える
     t = tc.get("/api/today?mode=place", headers=h).json()
     assert t["n_buy"] == 1 and t["races"][0]["pred_role"] == "place"
-    t = tc.get("/api/today?mode=ana", headers=h).json()
+    t = tc.get("/api/today?mode=ana", headers=h).json()   # 旧記録も mode 指定なら読める
     assert t["n_skip"] == 1 and t["races"][0]["skip_reason"] == "q_man_low"
 
 

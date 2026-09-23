@@ -1491,3 +1491,45 @@ races・status、設定PUT→modes_from_settings の往復、Playwright 390px �
 - 本番の boat_eval に exhibition_rank / motor_rate2 が入っているか（`/api/races/<id>` の predictions[].boat_eval）。
 - 較正の a,b は**確定オッズ**で推定した値。締切前オッズでの再推定は記録が貯まってから。
 - 規則の成立本数は理論上1日3.3本。数日で `lab modes` の ev1 行で確認。
+
+## 4モード化＋展示評価（◎×）の人手入力（2026-09-23、modes_version="modes5"、SW bl-v21）
+
+**ユーザーの方針**: 自分で展示映像を見て「良さそう／ダメそう」を決め、それを加味した予想を残し、結果と突き合わせて較正する。
+残す予想は **堅い（上位厚め）・期待値1以上・複勝・本命5本** の4モード。穴狙い(ana)・堅い保証つき(katai)は**記録も停止**
+（`MODE_ROLES=("katai_t","honmei","place","ev1")`。選定関数と test_modes.py は残す。旧記録は `?mode=ana|katai` の CSV で取り出せる）。
+ただし穴狙いの要素「市場が荒れると見ているか」は全モードの flags に残す（`q_man`・`rough_market`＝q_man ≥ ana_qman_min、画面のタグ「市場は荒れ予想 x%」）。
+
+### 設計（譲れない3点）
+1. **評価は確定予想より前に入力したものだけ使う**: `load_ratings(s, race_id, before=now)`。確定後の入力は残るが未反映（画面に「確定後の入力」と出る）。
+2. **同じレースで評価なし／評価ありを対で記録**: 評価が1艇でもあれば `rated_output()` で確率を作り直し、
+   `_record_modes(..., suffix="R", only=RATED_ROLES)` で role `katai_tR`/`honmeiR`/`ev1R` を追記。複勝は市場だけで決めるので対象外。
+   `flags.mode` は元のモード名・`flags.role` が実際の role（採点は mode で分岐）。honmeiR の枠は honmei と別勘定。
+3. **較正は自動で変えない**: `analytics/ratings.py` の `estimate_beta`（評価なし版の120通り確率を土台に、実際の3連単の対数尤度を
+   最大にする beta を格子探索、beta=0 との尤度差 1.92 で判定、n<100 は "few"）を `/api/modes.rated.calibration` に出すだけ。
+   設定 `rating_beta`（既定 0.3）はユーザーが変える。
+
+### 加味の式（`adjust_probs_for_ratings`）
+combo (a,b,c) の重み = p × exp(beta·(1.0·r_a + 0.5·r_b + 0.25·r_c))、r=+1(◎)/−1(×)/0。正規化。beta=0.3 で ◎の1着 ×1.35。
+合成データで beta=0.5 → 推定0.4（区間0.25〜0.55）、beta=0.6 → 区間に入る、効かないデータ → no_evidence を確認。
+
+### 保存と画面
+- テーブル `exhibition_ratings`（race_id, lane, rating, created_at, source）追記専用トリガ＋created_at=now ガード（SQLite/Postgres）。
+  同じ (race, lane) は最新行が有効。0 は「無印に戻す」の行。`init_db` の create_all で本番にも自動で作られる（マイグレーション不要）。
+- API: `POST /api/ratings {race_id, ratings:{lane: -1|0|1}}`、`GET /api/ratings?race_id=`、`/api/races/{id}.ratings`
+  （lanes / final_at / used / usable_until=締切−FINAL_MAX分 / locked）、`/api/today` に `rated`・`has_ratings`、
+  `/api/modes.rated`（katai_t/honmei/ev1 の対の集計＋calibration＋beta_setting）、`/api/export_ratings.csv`、`?mode=katai_tR` 等のCSV。
+- 画面: レース画面に「展示を見た評価」カード（6艇×◎/×、タップで即保存、状態ピル）、加味版があれば「◎×を加味した予想」を並べて表示、
+  ホームに「◎×（展示評価）の検証」（対の表＋推定beta＋◎/×の艇のモデル1着確率→実際）、設定に「評価の効き」。ヘッダは4ボタン。
+- `record_late_modes`（ana 依存の死んだコード）は削除。
+
+### 出荷前チェックで踏んだこと
+- 検査DBに出走表が無いと評価カードが空になった → 出走表未取得でも6艇分の行を出すよう修正。
+- ブラウザのタイムゾーンが UTC だと「あと13分」が「あと553分」になり details が閉じる（本番の端末は JST なので問題なし。Playwright は timezone_id="Asia/Tokyo"）。
+- SQLAlchemy は relationship の無い FK の挿入順を保証しない → テストで Race と評価は別セッションで入れる。
+- `pkill -f`/`pgrep -f "uvicorn …"` は自分のシェルにも一致して殺す（exit 144）。サーバー停止は port で確認する。
+確認: pytest 全86件通過（test_ratings.py 4件追加）、TestClient で13 API、Playwright 390px でホーム（検証カード）・レース（加味版）・
+入力操作（◎×タップ→保存→表示）・設定。
+
+### 未検証（本番で確認）
+- 展示の時刻から締切4分前までの入力の窓（6〜10分）が実用に足りるか。
+- 本番の scheduler は `predict_pending` 経由で `load_ratings` を呼ぶ。最初の評価ありレースで `lab modes` に R 行が出るか。

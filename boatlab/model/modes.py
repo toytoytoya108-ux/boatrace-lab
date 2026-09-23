@@ -23,7 +23,7 @@ import numpy as np
 
 from boatlab.model.trifecta import PERMS
 
-MODES_VERSION = "modes4"   # 2026-09-21: ev1（期待値1以上）を追加
+MODES_VERSION = "modes5"   # 2026-09-23: 4モード化（穴・堅い保証つきの記録停止）＋展示評価◎×の加味版（role 末尾 R）
 UNIT = 100
 Q_MAN = 0.0075                                  # オッズ100倍 ⟺ 万舟
 _A = np.array([p[0] for p in PERMS])
@@ -127,6 +127,11 @@ class ModeParams:
     ev1_odds_ratio: float = EV1_ODDS_RATIO
     ev1_stake3t: int = 100
     ev1_points_max: int = 3
+
+    # 展示評価（2026-09-23）: ◎=+1 / ×=-1。艇の強さを exp(±beta) 倍にして120通りを作り直す。
+    # 1着に full、2着に半分、3着に1/4 の重み。beta=0.3 なら ◎の艇の1着の強さ ×1.35、×の艇 ×0.74。
+    # 貯まった評価から推定した beta は画面に出すだけで、設定は自動では変えない。
+    rating_beta: float = 0.3
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -320,6 +325,25 @@ def select_place(odds3t: np.ndarray, prm: ModeParams) -> dict:
               lane=ms["q1_arg"] + 1, q=ms["q1_max"], stake=prm.place_stake,
               reason=None if prm.tansho_enabled and ms["q1_max"] >= prm.tansho_q_min else "q_low")
     return dict(fukusho=fk, tansho=tn, q_man=ms["q_man"])
+
+
+# ---------------------------------------------------------------- 展示評価（◎×）
+RATING_POS_W = (1.0, 0.5, 0.25)     # 1着・2着・3着に対する評価の重み
+
+
+def adjust_probs_for_ratings(p120: np.ndarray, ratings: dict, beta: float) -> np.ndarray:
+    """ユーザーの◎×で120通りの確率を作り直す。
+
+    combo (a,b,c) の重み = p × exp(beta·(1.0·r_a + 0.5·r_b + 0.25·r_c))。評価が無い艇は r=0。
+    beta=0 か評価が全部 0 なら元の確率と同一。合計は1に正規化。"""
+    p = np.asarray(p120, float)
+    r = np.array([float((ratings or {}).get(k, (ratings or {}).get(str(k), 0)) or 0) for k in range(1, 7)])
+    if beta == 0 or not np.any(r):
+        return p / p.sum()
+    lanes = np.array(PERMS)                 # (120, 3) 0-based
+    s = beta * (RATING_POS_W[0] * r[lanes[:, 0]] + RATING_POS_W[1] * r[lanes[:, 1]] + RATING_POS_W[2] * r[lanes[:, 2]])
+    w = p * np.exp(s)
+    return w / w.sum()
 
 
 # ---------------------------------------------------------------- 期待値1以上

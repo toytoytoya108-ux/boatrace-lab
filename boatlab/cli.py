@@ -510,26 +510,30 @@ def modes(day: str = typer.Option("", "--day", help="YYYY-MM-DD（既定=今日�
     typer.echo(f"{d} の各モード記録（確定予想・仮想）")
     with eng.connect() as c:
         rows = c.execute(_text("""
-            SELECT p.role, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.rationale_text,
+            SELECT p.role, p.race_id, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.rationale_text,
                    (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id=p.id) stake,
                    sc.valid, sc.hit, sc.pnl
             FROM predictions p JOIN races r ON r.id=p.race_id LEFT JOIN scoring sc ON sc.prediction_id=p.id
-            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ev1','ana','katai','katai_t','honmei','place')
+            WHERE r.race_date=:d AND p.stage='final' AND p.role IN ('ev1','katai_t','honmei','place','ev1R','katai_tR','honmeiR')
             ORDER BY p.role, r.closed_at""" ), {"d": str(d)}).mappings().all()
     if not rows:
         typer.echo("  記録なし（確定予想は各レースの締切4〜10分前に保存されます）")
         raise typer.Exit()
-    est = sum(1 for x in rows if x["role"] == "ana" and x["skip_reason"] == "odds_estimated")
-    n_ana = sum(1 for x in rows if x["role"] == "ana")
-    typer.echo(f"  実オッズで作られたレース {n_ana - est} / 推定オッズ（市場ベースの2モードは見送り） {est}")
-    for role, nm in (("ev1", "期待値1以上（複勝規則＋較正3連単）"), ("ana", "3連単（穴狙い）"), ("katai", "3連単（堅い予想）"), ("katai_t", "3連単（堅い・上位厚め）"),
-                     ("honmei", f"3連単（本命10点・{prm.honmei_multiple:g}倍保証）"), ("place", "複勝・単勝")):
+    est = sum(1 for x in rows if x["role"] == "honmei" and x["skip_reason"] == "odds_estimated")
+    n_hm = sum(1 for x in rows if x["role"] == "honmei")
+    n_rated = len({x["race_id"] for x in rows if str(x["role"]).endswith("R")})
+    typer.echo(f"  実オッズで作られたレース {n_hm - est} / 推定オッズ（市場ベースのモードは見送り） {est} / ◎×を加味した版のあるレース {n_rated}")
+    for role, nm in (("ev1", "期待値1以上（複勝規則＋較正3連単）"), ("katai_t", "3連単（堅い・上位厚め）"),
+                     ("honmei", f"3連単（本命5本・{prm.honmei_multiple:g}倍保証）"), ("place", "複勝・単勝"),
+                     ("ev1R", "期待値1以上・◎×加味"), ("katai_tR", "堅い・◎×加味"), ("honmeiR", "本命・◎×加味")):
         rs = [x for x in rows if x["role"] == role]
         fired = [x for x in rs if x["decision"] == "buy"]
         scored = [x for x in fired if x["valid"]]
         stake = sum(int(x["stake"] or 0) for x in fired)
         pnl = sum(int(x["pnl"] or 0) for x in scored)
-        m = MEASURED.get(role) or MEASURED["fukusho"]
+        if role.endswith("R") and not rs:
+            continue
+        m = MEASURED.get(role.rstrip("R")) or MEASURED["fukusho"]
         typer.echo(f"\n[{nm}] 記録 {len(rs)}R / 発火 {len(fired)}R / 投資予定 {stake:,}円"
                    f" / 採点済 {len(scored)}R 的中 {sum(1 for x in scored if x['hit'])} 損益 {pnl:+,}円"
                    f"   （実測の目安: 回収率 {m['roi']*100:.1f}%）")

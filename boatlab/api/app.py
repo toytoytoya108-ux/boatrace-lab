@@ -19,7 +19,7 @@ from sqlalchemy import select, text
 from boatlab.analytics import performance as perf
 from boatlab.config import STADIUMS
 from boatlab.store.db import get_engine, init_db, session_scope
-from boatlab.store.models import JobRun, ModelVersion, SettingsVersion
+from boatlab.store.models import ExhibitionRating, JobRun, ModelVersion, SettingsVersion
 from boatlab.util import now_jst
 
 SECRET = os.environ.get("BOATLAB_SECRET", "change-me")
@@ -93,7 +93,10 @@ def _q(sql: str, **params) -> list[dict]:
 
 
 ROLE_OF_MODE = {"std": "active", "focused": "focused", "ana": "ana", "katai": "katai", "katai_t": "katai_t",
-                "honmei": "honmei", "place": "place", "ev1": "ev1"}
+                "honmei": "honmei", "place": "place", "ev1": "ev1",
+                # 展示評価（◎×）を加味した版（2026-09-23）。ana/katai は記録を止めたが旧記録のCSV用に残す
+                "katai_tR": "katai_tR", "honmeiR": "honmeiR", "ev1R": "ev1R"}
+MAIN_ROLES = ("ev1", "katai_t", "honmei", "place")
 
 
 def _role(mode: str | None) -> str:
@@ -161,7 +164,9 @@ def today(d: str | None = None, mode: str | None = None, stadium: int | None = N
                p.id AS prediction_id, p.stage, p.role AS pred_role, p.confidence, p.expected_return, p.decision, p.skip_reason, p.completeness, p.flags,
                (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,
                (SELECT SUM(ps.stake) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS stake_plan,
-               sc.hit, sc.hit_kind, sc.pnl, sc.roi, sc.valid, sc.stake_total, sc.payout_total, sc.category
+               sc.hit, sc.hit_kind, sc.pnl, sc.roi, sc.valid, sc.stake_total, sc.payout_total, sc.category,
+               EXISTS(SELECT 1 FROM predictions x WHERE x.race_id = r.id AND x.stage = 'final' AND x.role = :role || 'R') AS rated,
+               EXISTS(SELECT 1 FROM exhibition_ratings er WHERE er.race_id = r.id) AS has_ratings
         FROM races r
         LEFT JOIN results res ON res.race_id = r.id
         LEFT JOIN predictions p ON p.id = (
@@ -215,7 +220,81 @@ def race_detail(race_id: int, _=Depends(require_auth)):
         p.pop("features_used", None)
     odds = _q("SELECT id, captured_at, source, odds FROM odds_snapshots WHERE race_id=:id AND bet_type='3t' ORDER BY captured_at DESC LIMIT 3", id=race_id)
     return {"race": race, "entries": entries, "previews": [latest_prev[k] for k in sorted(latest_prev)],
-            "conditions": cond[0] if cond else None, "result_entries": result_entries, "predictions": preds, "odds": odds}
+            "conditions": cond[0] if cond else None, "result_entries": result_entries, "predictions": preds, "odds": odds,
+            "ratings": _ratings_state(race_id, race, preds)}
+
+
+def _ratings_state(race_id: int, race: dict, preds: list[dict]) -> dict:
+    """その艇の最新の◎×と、確定予想に使われたかどうか。"""
+    from boatlab.ops.scheduler import FINAL_MAX
+    rows = _q("SELECT lane, rating, created_at FROM exhibition_ratings WHERE race_id=:id ORDER BY created_at", id=race_id)
+    latest = {}
+    for x in rows:
+        latest[int(x["lane"])] = {"rating": int(x["rating"]), "created_at": x["created_at"]}
+    final = [p for p in preds if p.get("stage") == "final" and p.get("role") in MAIN_ROLES]
+    final_at = min((p["created_at"] for p in final), default=None)
+    rated = next((p for p in preds if p.get("stage") == "final" and str(p.get("role", "")).endswith("R")), None)
+    used = (rated.get("flags") or {}).get("ratings") if rated else None
+    closed = race.get("closed_at")
+    usable_until = None
+    if closed:
+        c = datetime.fromisoformat(str(closed)) if not isinstance(closed, datetime) else closed
+        usable_until = (c - timedelta(minutes=FINAL_MAX)).isoformat(sep=" ", timespec="minutes")
+    return {"lanes": {str(k): v for k, v in sorted(latest.items())}, "final_at": final_at, "used": used,
+            "usable_until": usable_until, "locked": final_at is not None}
+
+
+@app.get("/api/ratings")
+def ratings_get(race_id: int, _=Depends(require_auth)):
+    race = _q("SELECT r.* FROM races r WHERE r.id=:id", id=race_id)
+    if not race:
+        raise HTTPException(404)
+    preds = _q("SELECT id, stage, role, created_at, flags FROM predictions WHERE race_id=:id", id=race_id)
+    return _ratings_state(race_id, race[0], preds)
+
+
+@app.post("/api/ratings")
+def ratings_post(body: dict, _=Depends(require_auth)):
+    """展示評価を追記する。body = {race_id, ratings: {"1": 1, "4": -1, "2": 0}}（0＝無印に戻す）。
+
+    追記専用。確定予想が既にあるレースにも書けるが、その予想には反映されない（画面で「反映されない」と出す）。"""
+    try:
+        rid = int(body.get("race_id"))
+        ratings = {int(k): int(v) for k, v in (body.get("ratings") or {}).items()}
+    except Exception:
+        raise HTTPException(400, "race_id and ratings required")
+    if not ratings or any(l < 1 or l > 6 for l in ratings) or any(v not in (-1, 0, 1) for v in ratings.values()):
+        raise HTTPException(400, "ratings must be {lane(1..6): -1|0|1}")
+    race = _q("SELECT r.* FROM races r WHERE r.id=:id", id=rid)
+    if not race:
+        raise HTTPException(404, "race not found")
+    now = now_jst().replace(tzinfo=None)
+    with session_scope() as s:
+        for lane, v in sorted(ratings.items()):
+            s.add(ExhibitionRating(race_id=rid, lane=lane, rating=v, created_at=now, source="user"))
+    preds = _q("SELECT id, stage, role, created_at, flags FROM predictions WHERE race_id=:id", id=rid)
+    return _ratings_state(rid, race[0], preds)
+
+
+@app.get("/api/export_ratings.csv")
+def export_ratings(_=Depends(require_auth)):
+    """評価の一覧（最新の評価だけ）と結果・払戻・確定予想に使われたか。分析依頼用。"""
+    rows = _q("""
+        SELECT er.race_id, r.race_date, r.stadium_code, r.race_no, er.lane, er.rating, er.created_at,
+               re.finish_pos, res.trifecta,
+               (SELECT p.created_at FROM predictions p WHERE p.race_id = er.race_id AND p.stage='final' AND p.role='katai_t' LIMIT 1) AS final_at
+        FROM exhibition_ratings er
+        JOIN races r ON r.id = er.race_id
+        LEFT JOIN result_entries re ON re.race_id = er.race_id AND re.lane = er.lane
+        LEFT JOIN results res ON res.race_id = er.race_id
+        WHERE er.id IN (SELECT MAX(id) FROM exhibition_ratings GROUP BY race_id, lane)
+        ORDER BY r.race_date, er.race_id, er.lane""")
+    for x in rows:
+        x["stadium"] = STADIUMS.get(x["stadium_code"])
+        x["used_in_final"] = bool(x["final_at"] and str(x["created_at"]) <= str(x["final_at"]))
+    df = pd.DataFrame(rows)
+    return Response(content=df.to_csv(index=False), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=exhibition_ratings.csv"})
 
 
 def _scored(model, mode, stadium=None):
@@ -499,7 +578,7 @@ def modes(d: str | None = None, _=Depends(require_auth)):
     st = _settings()
     prm = ModeParams.from_dict((st.get("extra") or {}).get("modes")).to_dict()
     out = {"date": str(day), "modes_version": MODES_VERSION, "params": prm, "modes": {}}
-    for role in ("ev1", "ana", "katai", "katai_t", "honmei", "place"):
+    for role in MAIN_ROLES:
         today_rows = _q("""
             SELECT r.id, r.stadium_code, r.race_no, r.closed_at, p.decision, p.skip_reason, p.flags, p.rationale_text,
                    (SELECT COUNT(*) FROM prediction_selections ps WHERE ps.prediction_id = p.id) AS n_points,
@@ -565,6 +644,20 @@ def modes(d: str | None = None, _=Depends(require_auth)):
                            "since": c.get("since")},
             "by_tag": by_tag,
         }
+    # 展示評価（◎×）: 評価あり版との対の比較と、評価の効き（beta）の推定（提案のみ。設定は自動では変えない）
+    from boatlab.analytics import ratings as rt
+    rated = {}
+    for base in ("katai_t", "honmei", "ev1"):
+        try:
+            df = rt.load_rated_pairs(mv, base)
+            rated[base] = rt.paired_summary(df)
+            if base == "katai_t":
+                cal = rt.estimate_beta(df); cal.pop("grid", None)
+                rated["calibration"] = cal
+        except Exception as e:  # 集計の失敗で画面全体を落とさない
+            rated[base] = {"n": 0, "error": str(e)[:200]}
+    rated["beta_setting"] = prm.get("rating_beta")
+    out["rated"] = rated
     return out
 
 

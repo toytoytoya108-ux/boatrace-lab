@@ -75,6 +75,13 @@ SQLITE_TRIGGERS = [
        BEGIN SELECT RAISE(ABORT, 'prediction_selections are append-only'); END;""",
     """CREATE TRIGGER IF NOT EXISTS selections_no_delete BEFORE DELETE ON prediction_selections
        BEGIN SELECT RAISE(ABORT, 'prediction_selections are append-only'); END;""",
+    """CREATE TRIGGER IF NOT EXISTS ratings_no_update BEFORE UPDATE ON exhibition_ratings
+       BEGIN SELECT RAISE(ABORT, 'exhibition_ratings are append-only'); END;""",
+    """CREATE TRIGGER IF NOT EXISTS ratings_no_delete BEFORE DELETE ON exhibition_ratings
+       BEGIN SELECT RAISE(ABORT, 'exhibition_ratings are append-only'); END;""",
+    """CREATE TRIGGER IF NOT EXISTS ratings_created_at_guard BEFORE INSERT ON exhibition_ratings
+       WHEN abs(strftime('%s', NEW.created_at) - strftime('%s', 'now', '+9 hours')) > 60
+       BEGIN SELECT RAISE(ABORT, 'exhibition_ratings.created_at must be now()'); END;""",
 ]
 
 POSTGRES_TRIGGERS = """
@@ -86,6 +93,9 @@ CREATE TRIGGER predictions_immutable BEFORE UPDATE OR DELETE ON predictions
 DROP TRIGGER IF EXISTS poolgap_immutable ON pool_gap_picks;
 CREATE TRIGGER poolgap_immutable BEFORE UPDATE OR DELETE ON pool_gap_picks
 FOR EACH ROW EXECUTE FUNCTION boatlab_append_only();
+DROP TRIGGER IF EXISTS ratings_immutable ON exhibition_ratings;
+CREATE TRIGGER ratings_immutable BEFORE UPDATE OR DELETE ON exhibition_ratings
+  FOR EACH ROW EXECUTE FUNCTION forbid_change();
 DROP TRIGGER IF EXISTS selections_immutable ON prediction_selections;
 CREATE TRIGGER selections_immutable BEFORE UPDATE OR DELETE ON prediction_selections
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
